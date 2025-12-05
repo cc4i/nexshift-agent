@@ -1,0 +1,116 @@
+{
+  "nurse_001": {
+    "nurse_name": "Alice",
+    "total_shifts_30d": 14,
+    "weekend_shifts_30d": 2,
+    "night_shifts_30d": 0,
+    "consecutive_shifts_current": 1,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.9,
+    "fatigue_score": 0.24,
+    "updated_at": "2025-12-04T19:55:59.334240"
+  },
+  "nurse_002": {
+    "nurse_name": "Bob",
+    "total_shifts_30d": 12,
+    "weekend_shifts_30d": 1,
+    "night_shifts_30d": 4,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.85,
+    "fatigue_score": 0.22,
+    "updated_at": "2025-12-04T19:55:59.334274"
+  },
+  "nurse_003": {
+    "nurse_name": "Charlie",
+    "total_shifts_30d": 12,
+    "weekend_shifts_30d": 3,
+    "night_shifts_30d": 3,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.88,
+    "fatigue_score": 0.31,
+    "updated_at": "2025-12-04T19:55:59.334311"
+  },
+  "nurse_004": {
+    "nurse_name": "Diana",
+    "total_shifts_30d": 15,
+    "weekend_shifts_30d": 3,
+    "night_shifts_30d": 5,
+    "consecutive_shifts_current": 1,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.82,
+    "fatigue_score": 0.48,
+    "updated_at": "2025-12-04T19:55:59.334342"
+  },
+  "nurse_005": {
+    "nurse_name": "Edward",
+    "total_shifts_30d": 11,
+    "weekend_shifts_30d": 1,
+    "night_shifts_30d": 0,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.92,
+    "fatigue_score": 0.08,
+    "updated_at": "2025-12-04T19:55:59.334362"
+  },
+  "nurse_006": {
+    "nurse_name": "Fiona",
+    "total_shifts_30d": 14,
+    "weekend_shifts_30d": 5,
+    "night_shifts_30d": 6,
+    "consecutive_shifts_current": 2,
+    "last_shift_date": "2025-12-03",
+    "preferences_honored_rate": 0.78,
+    "fatigue_score": 0.55,
+    "updated_at": "2025-12-04T00:00:00"
+  },
+  "nurse_007": {
+    "nurse_name": "George",
+    "total_shifts_30d": 9,
+    "weekend_shifts_30d": 0,
+    "night_shifts_30d": 2,
+    "consecutive_shifts_current": 1,
+    "last_shift_date": "2025-12-03",
+    "preferences_honored_rate": 0.95,
+    "fatigue_score": 0.22,
+    "updated_at": "2025-12-04T00:00:00"
+  },
+  "nurse_008": {
+    "nurse_name": "Hannah",
+    "total_shifts_30d": 7,
+    "weekend_shifts_30d": 0,
+    "night_shifts_30d": 0,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.98,
+    "fatigue_score": 0.0,
+    "updated_at": "2025-12-04T19:55:59.334384"
+  },
+  "nurse_009": {
+    "nurse_name": "Ivan",
+    "total_shifts_30d": 5,
+    "weekend_shifts_30d": 3,
+    "night_shifts_30d": 2,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "2025-11-30",
+    "preferences_honored_rate": 0.9,
+    "fatigue_score": 0.18,
+    "updated_at": "2025-12-04T00:00:00"
+  },
+  "nurse_010": {
+    "nurse_name": "Julia",
+    "total_shifts_30d": 6,
+    "weekend_shifts_30d": 2,
+    "night_shifts_30d": 2,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "",
+    "preferences_honored_rate": 0.85,
+    "fatigue_score": 0.22,
+    "updated_at": "2025-12-04T19:55:59.334413"
+  },
+  "_metadata": {
+    "last_recalculated": "2025-12-04T00:00:00",
+    "calculation_window_days": 30
+  }
+}
