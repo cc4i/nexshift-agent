@@ -4,7 +4,7 @@ HOSPITAL NURSING REGULATIONS & LABOR LAWS
 1. SHIFT LIMITS
    - Maximum consecutive shifts: 3
    - Maximum hours per week: 40 (FullTime), 30 (PartTime), 20 (Casual)
-   - Minimum rest period between shifts: 10 hours
+   - Minimum rest period between shifts: 8 hours
 
 2. COVERAGE REQUIREMENTS
    - At least one Senior nurse must be on duty for every shift

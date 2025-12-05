@@ -76,6 +76,163 @@ def _calculate_fatigue_score(stats: dict) -> float:
 
 
 # =============================================================================
+# Scheduling Period Tools
+# =============================================================================
+
+def get_scheduled_periods() -> list:
+    """
+    Returns a list of all scheduled periods from finalized and draft rosters.
+    Only includes rosters that still have their roster file.
+
+    Returns:
+        List of dicts with roster_id, status, start, end dates.
+    """
+    history = _load_json(SHIFT_HISTORY_FILE)
+    periods = []
+
+    for log in history.get("logs", []):
+        status = log.get("status", "")
+        if status not in ["finalized", "draft"]:
+            continue
+
+        roster_id = log.get("roster_id") or log.get("id")
+
+        # Verify the roster file still exists
+        roster_file = os.path.join(ROSTERS_DIR, f"{roster_id}.json")
+        if not os.path.exists(roster_file):
+            continue  # Skip if roster file was deleted
+
+        period = log.get("period", {})
+        if period.get("start") and period.get("end"):
+            periods.append({
+                "roster_id": roster_id,
+                "status": status,
+                "start": period["start"],
+                "end": period["end"]
+            })
+
+    return sorted(periods, key=lambda x: x["start"])
+
+
+def get_next_unscheduled_date() -> str:
+    """
+    Finds the next date that doesn't have a finalized roster.
+
+    Returns:
+        Date string in YYYY-MM-DD format for the next unscheduled date.
+    """
+    periods = get_scheduled_periods()
+
+    # Only consider finalized rosters for determining next date
+    finalized_periods = [p for p in periods if p["status"] == "finalized"]
+
+    if not finalized_periods:
+        # No finalized rosters, start from today
+        return datetime.now().strftime("%Y-%m-%d")
+
+    # Find the latest end date from finalized rosters
+    latest_end = max(p["end"] for p in finalized_periods)
+
+    try:
+        latest_end_dt = datetime.strptime(latest_end, "%Y-%m-%d")
+        next_date = latest_end_dt + timedelta(days=1)
+        return next_date.strftime("%Y-%m-%d")
+    except ValueError:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def check_period_overlap(start_date: str, num_days: int = 7) -> dict:
+    """
+    Checks if the requested period overlaps with existing rosters.
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format
+        num_days: Number of days to schedule
+
+    Returns:
+        Dict with overlap info:
+        - has_overlap: bool
+        - overlapping_rosters: list of roster info
+        - suggested_start: next available start date
+    """
+    try:
+        req_start = datetime.strptime(start_date, "%Y-%m-%d")
+        req_end = req_start + timedelta(days=num_days - 1)
+    except ValueError:
+        return {
+            "has_overlap": False,
+            "overlapping_rosters": [],
+            "suggested_start": start_date,
+            "error": "Invalid date format"
+        }
+
+    periods = get_scheduled_periods()
+    overlapping = []
+
+    for p in periods:
+        try:
+            p_start = datetime.strptime(p["start"], "%Y-%m-%d")
+            p_end = datetime.strptime(p["end"], "%Y-%m-%d")
+
+            # Check for overlap: NOT (req_end < p_start OR req_start > p_end)
+            if not (req_end < p_start or req_start > p_end):
+                overlapping.append({
+                    "roster_id": p["roster_id"],
+                    "status": p["status"],
+                    "period": f"{p['start']} to {p['end']}"
+                })
+        except ValueError:
+            continue
+
+    # Find suggested start date
+    suggested_start = get_next_unscheduled_date()
+
+    return {
+        "has_overlap": len(overlapping) > 0,
+        "overlapping_rosters": overlapping,
+        "suggested_start": suggested_start,
+        "requested_period": f"{start_date} to {req_end.strftime('%Y-%m-%d')}"
+    }
+
+
+def get_scheduling_status() -> str:
+    """
+    Returns a summary of scheduling status including scheduled periods
+    and the next available date.
+
+    Returns:
+        Formatted string with scheduling status.
+    """
+    periods = get_scheduled_periods()
+    next_date = get_next_unscheduled_date()
+
+    result = "SCHEDULING STATUS\n" + "=" * 50 + "\n\n"
+
+    if not periods:
+        result += "No rosters scheduled yet.\n"
+    else:
+        result += "SCHEDULED PERIODS:\n" + "-" * 40 + "\n"
+
+        finalized = [p for p in periods if p["status"] == "finalized"]
+        drafts = [p for p in periods if p["status"] == "draft"]
+
+        if finalized:
+            result += "\n✅ Finalized:\n"
+            for p in finalized:
+                result += f"   {p['start']} to {p['end']} ({p['roster_id']})\n"
+
+        if drafts:
+            result += "\n📝 Drafts (pending approval):\n"
+            for p in drafts:
+                result += f"   {p['start']} to {p['end']} ({p['roster_id']})\n"
+
+    result += f"\n" + "=" * 50 + "\n"
+    result += f"📅 Next unscheduled date: {next_date}\n"
+
+    return result
+
+
+# =============================================================================
 # Read Tools (Phase 2)
 # =============================================================================
 
@@ -197,13 +354,13 @@ def get_nurse_stats_json() -> str:
 
 def get_roster_by_id(roster_id: str) -> str:
     """
-    Retrieves a specific roster by its ID.
+    Retrieves a specific roster by its ID with full calendar view.
 
     Args:
         roster_id: The unique identifier for the roster (e.g., "roster_2025_week_48")
 
     Returns:
-        Formatted string with full roster details including all assignments.
+        Formatted string with full roster details including all assignments in calendar view.
     """
     # First check individual roster files
     roster_file = os.path.join(ROSTERS_DIR, f"{roster_id}.json")
@@ -215,47 +372,158 @@ def get_roster_by_id(roster_id: str) -> str:
         history = _load_json(SHIFT_HISTORY_FILE)
         roster = None
         for log in history.get("logs", []):
-            if log.get("roster_id") == roster_id:
+            if log.get("roster_id") == roster_id or log.get("id") == roster_id:
                 roster = log
                 break
 
     if not roster:
         return f"Roster '{roster_id}' not found."
 
-    # Format output
-    result = f"ROSTER DETAILS: {roster_id}\n" + "=" * 50 + "\n\n"
+    # Load nurse names for display
+    from tools.data_loader import load_nurses, generate_shifts
+    nurses = {n.id: n for n in load_nurses()}
 
+    # Determine start date for shift generation
+    metadata = roster.get("metadata", {})
     period = roster.get("period", {})
-    result += f"Period: {period.get('start', '?')} to {period.get('end', '?')}\n"
+    start_dt = None
+    num_days = 7
+
+    if period.get('start'):
+        try:
+            start_dt = datetime.strptime(period['start'], "%Y-%m-%d")
+            if period.get('end'):
+                end_dt = datetime.strptime(period['end'], "%Y-%m-%d")
+                num_days = (end_dt - start_dt).days + 1
+        except ValueError:
+            pass
+
+    # If no period, infer from generated_at date
+    if not start_dt:
+        generated_at = roster.get('generated_at') or metadata.get('generated_at')
+        if generated_at:
+            try:
+                if 'T' in str(generated_at):
+                    start_dt = datetime.fromisoformat(str(generated_at).split('T')[0])
+                else:
+                    start_dt = datetime.strptime(str(generated_at).split(' ')[0], "%Y-%m-%d")
+            except ValueError:
+                pass
+
+    if not start_dt:
+        start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Generate shifts and build lookup map
+    shifts = generate_shifts(start_date=start_dt, num_days=num_days)
+    shifts_map = {s['id']: s for s in shifts}
+
+    # Calculate period
+    end_dt = start_dt + timedelta(days=num_days - 1)
+
+    # Format header
+    result = f"ROSTER DETAILS: {roster_id}\n" + "=" * 60 + "\n\n"
+    result += f"Period: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}\n"
     result += f"Status: {roster.get('status', 'unknown').upper()}\n"
     result += f"Generated: {roster.get('generated_at', 'N/A')}\n"
 
     if roster.get("finalized_at"):
         result += f"Finalized: {roster.get('finalized_at')}\n"
+    if roster.get("rejected_at"):
+        result += f"Rejected: {roster.get('rejected_at')}\n"
+        result += f"Reason: {roster.get('rejection_reason', 'N/A')}\n"
 
-    metadata = roster.get("metadata", {})
     result += f"\nCompliance: {metadata.get('compliance_status', 'N/A')}\n"
     result += f"Empathy Score: {metadata.get('empathy_score', 'N/A')}\n"
-    result += f"Iterations: {metadata.get('iterations', 1)}\n"
-
-    result += "\nASSIGNMENTS:\n" + "-" * 40 + "\n"
 
     assignments = roster.get("assignments", [])
-    if assignments:
-        # Group by date
-        by_date = {}
-        for a in assignments:
-            date = a.get("date", "unknown")
-            if date not in by_date:
-                by_date[date] = []
-            by_date[date].append(a)
+    result += f"Total Assignments: {len(assignments)}\n"
 
-        for date in sorted(by_date.keys()):
-            result += f"\n📆 {date}\n"
-            for a in by_date[date]:
-                result += f"   {a.get('nurse_id', '?')} → {a.get('ward', '?')} ({a.get('shift_type', '?')})\n"
-    else:
-        result += "No assignments found.\n"
+    if not assignments:
+        result += "\nNo assignments found.\n"
+        return result
+
+    # Group assignments by date
+    assignments_by_date = {}
+    for a in assignments:
+        shift_id = a.get("shift_id", "")
+        nurse_id = a.get("nurse_id", "")
+        shift_info = shifts_map.get(shift_id, {})
+        date = shift_info.get("date", "Unknown")
+
+        if date not in assignments_by_date:
+            assignments_by_date[date] = []
+
+        nurse = nurses.get(nurse_id)
+        assignments_by_date[date].append({
+            "nurse_id": nurse_id,
+            "nurse_name": nurse.name if nurse else nurse_id,
+            "seniority": nurse.seniority_level if nurse else "?",
+            "shift_id": shift_id,
+            "ward": shift_info.get("ward", "?"),
+            "start": shift_info.get("start", "?"),
+            "end": shift_info.get("end", "?"),
+            "day": shift_info.get("day", "")
+        })
+
+    # Calendar view output
+    result += "\n" + "=" * 60 + "\n"
+    result += "CALENDAR VIEW\n"
+    result += "=" * 60 + "\n"
+
+    for date in sorted(assignments_by_date.keys()):
+        day_assignments = assignments_by_date[date]
+        day_name = day_assignments[0].get("day", "") if day_assignments else ""
+        is_weekend = day_name in ["Saturday", "Sunday"]
+        weekend_marker = " [WEEKEND]" if is_weekend else ""
+
+        result += f"\n📅 {date} ({day_name}){weekend_marker}\n"
+        result += "-" * 50 + "\n"
+
+        # Sort by start time
+        for a in sorted(day_assignments, key=lambda x: x.get("start", "")):
+            time_range = f"{a['start']}-{a['end']}"
+            seniority_badge = {"Senior": "🔵", "Mid": "🟢", "Junior": "🟡"}.get(a['seniority'], "⚪")
+            result += f"  {time_range:14} | {a['ward']:10} | {seniority_badge} {a['nurse_name']:10} ({a['nurse_id']})\n"
+
+    # Summary by nurse
+    result += "\n" + "=" * 60 + "\n"
+    result += "SUMMARY BY NURSE\n"
+    result += "=" * 60 + "\n"
+
+    nurse_summary = {}
+    for date, day_assignments in assignments_by_date.items():
+        for a in day_assignments:
+            nid = a['nurse_id']
+            if nid not in nurse_summary:
+                nurse_summary[nid] = {
+                    "name": a['nurse_name'],
+                    "seniority": a['seniority'],
+                    "shifts": 0,
+                    "wards": set(),
+                    "weekends": 0,
+                    "nights": 0
+                }
+            nurse_summary[nid]["shifts"] += 1
+            nurse_summary[nid]["wards"].add(a['ward'])
+            if a['day'] in ["Saturday", "Sunday"]:
+                nurse_summary[nid]["weekends"] += 1
+            if a['start'] >= "20:00" or a['start'] < "06:00":
+                nurse_summary[nid]["nights"] += 1
+
+    result += f"\n{'Nurse':<15} {'Level':<8} {'Shifts':>6} {'Wknd':>5} {'Night':>5} {'Wards'}\n"
+    result += "-" * 60 + "\n"
+
+    for nid in sorted(nurse_summary.keys()):
+        s = nurse_summary[nid]
+        wards = ", ".join(sorted(s['wards']))
+        result += f"{s['name']:<15} {s['seniority']:<8} {s['shifts']:>6} {s['weekends']:>5} {s['nights']:>5} {wards}\n"
+
+    # Check for unassigned nurses
+    assigned_nurses = set(nurse_summary.keys())
+    all_nurses = set(nurses.keys())
+    unassigned = all_nurses - assigned_nurses
+    if unassigned:
+        result += f"\n⚠️  Unassigned nurses: {', '.join(sorted(unassigned))}\n"
 
     return result
 
@@ -469,9 +737,36 @@ def save_draft_roster(roster_json: str) -> str:
     roster["status"] = "draft"
     roster["generated_at"] = datetime.now().isoformat()
 
-    if "period" not in roster:
-        # Infer period from assignments
-        dates = [a.get("date") for a in roster.get("assignments", []) if a.get("date")]
+    # Calculate period from shift_ids by looking up shift dates
+    if "period" not in roster or not roster.get("period", {}).get("start"):
+        from tools.data_loader import generate_shifts
+
+        # Infer start date from generated_at or roster metadata
+        generated_at = roster.get("generated_at") or roster.get("metadata", {}).get("generated_at")
+        start_dt = None
+        if generated_at:
+            try:
+                if 'T' in str(generated_at):
+                    start_dt = datetime.fromisoformat(str(generated_at).split('T')[0])
+                else:
+                    start_dt = datetime.strptime(str(generated_at).split(' ')[0], "%Y-%m-%d")
+            except ValueError:
+                pass
+
+        if not start_dt:
+            start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Generate shifts to get the date mapping
+        shifts = generate_shifts(start_date=start_dt, num_days=7)
+        shift_dates = {s['id']: s['date'] for s in shifts}
+
+        # Extract dates from assignments using shift lookup
+        dates = []
+        for a in roster.get("assignments", []):
+            shift_id = a.get("shift_id")
+            if shift_id and shift_id in shift_dates:
+                dates.append(shift_dates[shift_id])
+
         if dates:
             roster["period"] = {"start": min(dates), "end": max(dates)}
 
@@ -796,6 +1091,45 @@ def compare_rosters(roster_id_1: str, roster_id_2: str) -> str:
 # =============================================================================
 # Maintenance Tools (Phase 5)
 # =============================================================================
+
+def sync_history_with_files() -> str:
+    """
+    Synchronizes shift_history.json with actual roster files.
+    Removes entries from history where the roster file no longer exists.
+
+    Returns:
+        Summary of cleanup actions taken.
+    """
+    history = _load_json(SHIFT_HISTORY_FILE)
+    original_count = len(history.get("logs", []))
+    removed = []
+
+    # Filter out entries where roster file doesn't exist
+    valid_logs = []
+    for log in history.get("logs", []):
+        roster_id = log.get("roster_id") or log.get("id")
+        roster_file = os.path.join(ROSTERS_DIR, f"{roster_id}.json")
+
+        if os.path.exists(roster_file):
+            valid_logs.append(log)
+        else:
+            removed.append(roster_id)
+
+    history["logs"] = valid_logs
+    _save_json(SHIFT_HISTORY_FILE, history)
+
+    result = "HISTORY SYNC COMPLETE\n" + "=" * 50 + "\n\n"
+    result += f"Original entries: {original_count}\n"
+    result += f"Valid entries: {len(valid_logs)}\n"
+    result += f"Removed: {len(removed)}\n"
+
+    if removed:
+        result += "\nRemoved orphaned entries:\n"
+        for rid in removed:
+            result += f"   - {rid}\n"
+
+    return result
+
 
 def cleanup_old_history(weeks: int = 12) -> str:
     """

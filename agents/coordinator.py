@@ -19,6 +19,7 @@ from agents.presenter import create_presenter_agent
 from tools.query_tools import (
     get_nurse_info,
     list_nurses,
+    list_nurse_preferences,
     get_nurse_availability,
     get_upcoming_shifts,
     get_staffing_summary
@@ -91,6 +92,7 @@ You can answer questions about nurses, shifts, and staffing:
 
 ### Nurse Queries
 - **list_nurses(filter_by)**: List nurses. Filters: "senior", "junior", "mid", "available", "fatigued", "fulltime", "parttime", "casual", "icu", "acls", "bls"
+- **list_nurse_preferences()**: List all nurses' scheduling preferences (night shift avoidance, preferred days, time-off requests)
 - **get_nurse_info(nurse_id)**: Get detailed info for a nurse by ID or name
 - **get_nurse_availability(date)**: Check who can work on a date (YYYY-MM-DD)
 - **get_nurse_stats()**: Get 30-day stats for all nurses (fatigue, shifts)
@@ -108,6 +110,14 @@ You can answer questions about nurses, shifts, and staffing:
 - **reject_roster(roster_id, reason)**: Reject a draft roster
 - **delete_pending_roster(roster_id)**: Permanently delete a draft/rejected roster
 
+### HRIS Management (Hiring, Promotions, Certifications)
+- **add_nurse(name, seniority_level, contract_type, certifications, ...)**: Add a new nurse to the system
+- **promote_nurse(nurse_id, new_level)**: Promote a nurse to a higher seniority level
+- **update_nurse_certifications(nurse_id, add_certifications, remove_certifications)**: Update nurse certifications
+- **update_nurse_preferences(nurse_id, avoid_night_shifts, preferred_days)**: Update nurse scheduling preferences
+- **remove_nurse(nurse_id)**: Remove a nurse from the system
+- **list_available_certifications()**: Show available certifications and ward requirements
+
 ## Roster Generation
 
 For roster generation requests, delegate to the RosteringWorkflow sub-agent which handles:
@@ -120,11 +130,19 @@ For roster generation requests, delegate to the RosteringWorkflow sub-agent whic
 ## Example Queries
 
 - "Show me all senior nurses" → list_nurses(filter_by="senior")
+- "Show nurse preferences" → list_nurse_preferences()
 - "Is Alice available tomorrow?" → get_nurse_info("Alice") or get_nurse_availability("2025-12-05")
 - "What shifts need to be filled?" → get_upcoming_shifts()
 - "Give me a staffing overview" → get_staffing_summary()
 - "Who's fatigued?" → list_nurses(filter_by="fatigued")
 - "Show ICU-certified nurses" → list_nurses(filter_by="icu")
+
+## HRIS Examples
+
+- "Hire a new ICU nurse named John" → add_nurse(name="John", seniority_level="Mid", certifications="ICU,BLS")
+- "Promote Bob to Mid level" → promote_nurse(nurse_id="nurse_002", new_level="Mid")
+- "Add ICU certification to Charlie" → update_nurse_certifications(nurse_id="nurse_003", add_certifications="ICU")
+- "What certifications are available?" → list_available_certifications()
 
 ## Response Style
 
@@ -134,6 +152,14 @@ For roster generation requests, delegate to the RosteringWorkflow sub-agent whic
 """
 
 from tools.history_tools import list_pending_rosters, finalize_roster, reject_roster, delete_pending_roster, get_roster
+from tools.hris_tools import (
+    add_nurse,
+    promote_nurse,
+    update_nurse_certifications,
+    update_nurse_preferences,
+    remove_nurse,
+    list_available_certifications
+)
 from callbacks.format_output import format_model_output
 
 
@@ -154,6 +180,7 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
         tools=[
             # Query tools - nurses
             list_nurses,
+            list_nurse_preferences,
             get_nurse_info,
             get_nurse_availability,
             get_nurse_stats,
@@ -167,7 +194,14 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             get_roster,
             finalize_roster,
             reject_roster,
-            delete_pending_roster
+            delete_pending_roster,
+            # HRIS management - hiring, promotions, certifications
+            add_nurse,
+            promote_nurse,
+            update_nurse_certifications,
+            update_nurse_preferences,
+            remove_nurse,
+            list_available_certifications
         ],
         sub_agents=[workflow],
         after_model_callback=format_model_output

@@ -1,30 +1,5 @@
 [
   {
-    "id": "nurse_001",
-    "name": "Alice",
-    "certifications": [
-      "ACLS",
-      "BLS",
-      "ICU"
-    ],
-    "seniority_level": "Senior",
-    "contract_type": "FullTime",
-    "preferences": {
-      "avoid_night_shifts": true,
-      "preferred_days": [
-        "Monday",
-        "Tuesday",
-        "Wednesday"
-      ],
-      "adhoc_requests": []
-    },
-    "history_summary": {
-      "last_shift": "2023-10-27T16:00:00",
-      "consecutive_shifts": 2,
-      "weekend_shifts_last_month": 2
-    }
-  },
-  {
     "id": "nurse_002",
     "name": "Bob",
     "certifications": [
@@ -238,6 +213,219 @@
       "last_shift": "2023-10-21T00:00:00",
       "consecutive_shifts": 0,
       "weekend_shifts_last_month": 1
+    }
+  },
+  {
+    "id": "nurse_011",
+    "name": "Kevin",
+    "certifications": [
+      "ACLS",
+      "BLS",
+      "ICU"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [
+        "Monday",
+        "Thursday"
+      ],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": "2023-10-28T08:00:00",
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 1
+    }
+  },
+  {
+    "id": "nurse_012",
+    "name": "Laura",
+    "certifications": [
+      "ACLS",
+      "BLS",
+      "ICU"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": true,
+      "preferred_days": [
+        "Tuesday",
+        "Friday"
+      ],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": "2023-10-27T16:00:00",
+      "consecutive_shifts": 1,
+      "weekend_shifts_last_month": 2
+    }
+  },
+  {
+    "id": "nurse_013",
+    "name": "Paseo",
+    "certifications": [
+      "BLS"
+    ],
+    "seniority_level": "Mid",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_014",
+    "name": "Pie",
+    "certifications": [
+      "ICU",
+      "ACLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_015",
+    "name": "Tommy",
+    "certifications": [
+      "ICU",
+      "ACLS",
+      "BLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_016",
+    "name": "Kate",
+    "certifications": [
+      "ICU",
+      "ACLS",
+      "BLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_017",
+    "name": "Nancy",
+    "certifications": [
+      "ICU",
+      "ACLS",
+      "BLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_018",
+    "name": "Canny",
+    "certifications": [
+      "ICU",
+      "ACLS",
+      "BLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "FullTime",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_019",
+    "name": "LadyGaga",
+    "certifications": [
+      "ICU",
+      "ACLS",
+      "BLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "Casual",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_020",
+    "name": "PutinC",
+    "certifications": [
+      "ICU",
+      "ACLS",
+      "BLS"
+    ],
+    "seniority_level": "Senior",
+    "contract_type": "Casual",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
     }
   }
 ]

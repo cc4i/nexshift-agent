@@ -225,6 +225,76 @@ def get_nurse_availability(date: str = "") -> str:
     return result
 
 
+def list_nurse_preferences() -> str:
+    """
+    List all nurses' scheduling preferences.
+
+    Returns:
+        Formatted list of all nurses with their preferences including:
+        - Night shift avoidance
+        - Preferred working days
+        - Active time-off requests
+    """
+    try:
+        nurses = load_nurses()
+
+        if not nurses:
+            return "No nurses found in the system."
+
+        result = "NURSE PREFERENCES\n" + "=" * 50 + "\n\n"
+
+        avoiding_nights = []
+        has_preferred_days = []
+        has_time_off = []
+
+        for n in nurses:
+            result += f"{n.name} ({n.id}) - {n.seniority_level}\n"
+
+            # Handle preferences safely
+            prefs = n.preferences
+            if prefs:
+                avoid_nights = getattr(prefs, 'avoid_night_shifts', False)
+                preferred_days = getattr(prefs, 'preferred_days', []) or []
+                adhoc_requests = getattr(prefs, 'adhoc_requests', []) or []
+
+                result += f"  Avoid night shifts: {'Yes' if avoid_nights else 'No'}\n"
+
+                if preferred_days:
+                    result += f"  Preferred days: {', '.join(preferred_days)}\n"
+                else:
+                    result += f"  Preferred days: Any\n"
+
+                if adhoc_requests:
+                    result += f"  Time-off requests: {', '.join(adhoc_requests)}\n"
+
+                # Track for summary
+                if avoid_nights:
+                    avoiding_nights.append(n.name)
+                if preferred_days:
+                    has_preferred_days.append(n.name)
+                if adhoc_requests:
+                    has_time_off.append(n.name)
+            else:
+                result += f"  Avoid night shifts: No\n"
+                result += f"  Preferred days: Any\n"
+
+            result += "\n"
+
+        # Summary
+        result += "-" * 50 + "\n"
+        result += "SUMMARY:\n"
+        result += f"  Avoiding night shifts: {len(avoiding_nights)} nurses\n"
+        if avoiding_nights:
+            result += f"    ({', '.join(avoiding_nights)})\n"
+        result += f"  Have preferred days: {len(has_preferred_days)} nurses\n"
+        result += f"  Have time-off requests: {len(has_time_off)} nurses\n"
+
+        return result
+
+    except Exception as e:
+        return f"Error loading nurse preferences: {str(e)}"
+
+
 def get_upcoming_shifts(days: int = 7) -> str:
     """
     Get shifts that need to be filled for the upcoming period.

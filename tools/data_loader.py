@@ -77,11 +77,21 @@ def generate_shifts(start_date: datetime = None, num_days: int = 7) -> list:
         start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
     # Shift templates for different wards
+    # ICU & Emergency: 24/7 coverage with 3 x 8-hour shifts
+    # General: Weekdays only, day shift (08:00-16:00)
     shift_templates = [
-        {"ward": "ICU", "start": "08:00", "end": "16:00", "certs": ["ICU"], "level": "Mid"},
-        {"ward": "ICU", "start": "16:00", "end": "00:00", "certs": ["ICU"], "level": "Junior"},
-        {"ward": "General", "start": "08:00", "end": "16:00", "certs": ["BLS"], "level": "Junior"},
-        {"ward": "Emergency", "start": "20:00", "end": "04:00", "certs": ["ACLS", "BLS"], "level": "Mid"},
+        # ICU - 24/7 coverage (3 shifts per day)
+        {"ward": "ICU", "start": "00:00", "end": "08:00", "certs": ["ICU"], "level": "Mid", "all_week": True},
+        {"ward": "ICU", "start": "08:00", "end": "16:00", "certs": ["ICU"], "level": "Mid", "all_week": True},
+        {"ward": "ICU", "start": "16:00", "end": "00:00", "certs": ["ICU"], "level": "Mid", "all_week": True},
+
+        # Emergency - 24/7 coverage (3 shifts per day)
+        {"ward": "Emergency", "start": "00:00", "end": "08:00", "certs": ["ACLS", "BLS"], "level": "Mid", "all_week": True},
+        {"ward": "Emergency", "start": "08:00", "end": "16:00", "certs": ["ACLS", "BLS"], "level": "Mid", "all_week": True},
+        {"ward": "Emergency", "start": "16:00", "end": "00:00", "certs": ["ACLS", "BLS"], "level": "Mid", "all_week": True},
+
+        # General - Weekdays only, day shift
+        {"ward": "General", "start": "08:00", "end": "16:00", "certs": ["BLS"], "level": "Junior", "all_week": False},
     ]
 
     shifts = []
@@ -90,10 +100,11 @@ def generate_shifts(start_date: datetime = None, num_days: int = 7) -> list:
     for day_offset in range(num_days):
         current_date = start_date + timedelta(days=day_offset)
         day_name = current_date.strftime("%A")
+        is_weekend = day_name in ["Saturday", "Sunday"]
 
         for template in shift_templates:
-            # Skip some shifts on weekends for variety
-            if day_name in ["Saturday", "Sunday"] and template["ward"] == "General":
+            # Skip non-24/7 wards on weekends
+            if is_weekend and not template.get("all_week", True):
                 continue
 
             shifts.append({
@@ -114,33 +125,54 @@ def generate_shifts(start_date: datetime = None, num_days: int = 7) -> list:
 def get_shifts_to_fill(start_date: str = "", num_days: int = 7) -> str:
     """
     Retrieves the shifts that need to be filled for the scheduling period.
+    Automatically uses the next unscheduled date if no start_date is provided.
+    Warns if the requested period overlaps with existing rosters.
 
     Args:
-        start_date: Optional start date in YYYY-MM-DD format (defaults to today)
+        start_date: Optional start date in YYYY-MM-DD format (defaults to next unscheduled date)
         num_days: Number of days to schedule (default: 7)
 
     Returns:
         Formatted string with shift details including ward, time, and requirements.
     """
-    # Parse start_date if provided
+    from tools.history_tools import get_next_unscheduled_date, check_period_overlap
+
+    # Parse start_date if provided, otherwise use next unscheduled date
     if start_date:
         try:
             parsed_date = datetime.strptime(start_date, "%Y-%m-%d")
         except ValueError:
             return f"Error: Invalid date format '{start_date}'. Use YYYY-MM-DD format."
     else:
-        parsed_date = None
+        # Use the next unscheduled date
+        next_date = get_next_unscheduled_date()
+        parsed_date = datetime.strptime(next_date, "%Y-%m-%d")
+
+    # Check for overlap with existing rosters
+    overlap_info = check_period_overlap(parsed_date.strftime("%Y-%m-%d"), num_days)
 
     shifts = generate_shifts(start_date=parsed_date, num_days=num_days)
 
     # Group shifts by date for display
     result = f"SHIFTS TO BE FILLED ({num_days} days)\n" + "=" * 50 + "\n"
+    result += f"Period: {parsed_date.strftime('%Y-%m-%d')} to {(parsed_date + timedelta(days=num_days-1)).strftime('%Y-%m-%d')}\n"
+
+    # Show overlap warning if applicable
+    if overlap_info["has_overlap"]:
+        result += "\n⚠️  WARNING: This period overlaps with existing rosters:\n"
+        for r in overlap_info["overlapping_rosters"]:
+            status_icon = "✅" if r["status"] == "finalized" else "📝"
+            result += f"   {status_icon} {r['roster_id']} ({r['status']}): {r['period']}\n"
+        result += f"\n   Suggested next available date: {overlap_info['suggested_start']}\n"
+        result += "   To regenerate, the existing roster must be deleted first.\n"
 
     current_date = None
     for s in shifts:
         if s["date"] != current_date:
             current_date = s["date"]
-            result += f"\n📆 {s['date']} ({s['day']})\n"
+            is_weekend = s["day"] in ["Saturday", "Sunday"]
+            weekend_marker = " [WEEKEND]" if is_weekend else ""
+            result += f"\n📆 {s['date']} ({s['day']}){weekend_marker}\n"
             result += "-" * 40 + "\n"
 
         result += f"  📅 {s['id']}: {s['ward']} Ward\n"
