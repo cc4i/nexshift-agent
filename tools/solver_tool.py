@@ -2,6 +2,7 @@ from ortools.sat.python import cp_model
 from models.domain import Nurse, Shift, Roster, Assignment, RosterMetadata, NursePreferences, NurseHistory
 from datetime import datetime
 import json
+import random
 
 
 def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: str = "{}") -> str:
@@ -964,6 +965,18 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
     # Soft Constraints (Preferences) - build objective function
     objective_terms = []
 
+    # Add small random noise to each assignment for variation on regeneration
+    # This ensures equivalent solutions get slightly different scores,
+    # causing the solver to pick different valid schedules each time
+    # Note: CP-SAT requires integer coefficients, so we use small integers (±1)
+    for n in nurses_objs:
+        for s in shifts_objs:
+            # Small integer noise - enough to break ties but not override real preferences
+            # Real preferences use values like 3, 5, 10, 25, 30, 50 - so ±1 won't dominate
+            noise = random.randint(-1, 1)
+            if noise != 0:
+                objective_terms.append(noise * assignments[(n.id, s.id)])
+
     # Soft Constraint: Prefer Senior nurses on shifts (for coverage)
     for s in shifts_objs:
         for n in nurses_objs:
@@ -1046,6 +1059,8 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
     # Add solver parameters for better performance
     solver.parameters.max_time_in_seconds = 30.0
     solver.parameters.num_search_workers = 8
+    # Add random seed to get different solutions on regeneration
+    solver.parameters.random_seed = random.randint(0, 2**31 - 1)
     status = solver.Solve(model)
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
@@ -1131,6 +1146,16 @@ def solve_roster_cp_model(nurses_json: str, shifts_json: str, constraints_json: 
     # Soft Constraints (Preferences) - build objective function
     objective_terms = []
 
+    # Add small random noise to each assignment for variation on regeneration
+    # This ensures equivalent solutions get slightly different scores,
+    # causing the solver to pick different valid schedules each time
+    # Note: CP-SAT requires integer coefficients, so we use small integers (±1)
+    for n in nurses_objs:
+        for s in shifts_objs:
+            noise = random.randint(-1, 1)
+            if noise != 0:
+                objective_terms.append(noise * assignments[(n.id, s.id)])
+
     for n in nurses_objs:
         # Get fatigue score for this nurse (default to 0 if not found)
         stats = nurse_stats.get(n.id, {})
@@ -1181,6 +1206,8 @@ def solve_roster_cp_model(nurses_json: str, shifts_json: str, constraints_json: 
 
     # Solve
     solver = cp_model.CpSolver()
+    # Add random seed to get different solutions on regeneration
+    solver.parameters.random_seed = random.randint(0, 2**31 - 1)
     status = solver.Solve(model)
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
