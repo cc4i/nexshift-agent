@@ -56,8 +56,8 @@ I need to create a roster for this week. Can you show me who's available and wha
 ```
 
 **Expected Behavior:**
-- Agent uses `get_available_nurses` tool to fetch nurse data
-- Agent uses `get_shifts_to_fill` tool to fetch shift requirements
+- Agent uses `list_nurses` tool to fetch nurse data
+- Agent uses `get_upcoming_shifts` tool to fetch shift requirements
 - Agent uses `get_nurse_stats` to check fatigue levels
 - Agent presents a summary with any concerns highlighted
 
@@ -159,9 +159,79 @@ Which nurses have high fatigue scores? Make sure they get fewer shifts this week
 
 **Expected Behavior:**
 - Agent calls `get_nurse_stats`
-- Identifies nurses with fatigue score > 0.4
+- Identifies nurses with fatigue score >= 0.5 (moderate) or >= 0.8 (high risk)
 - Generates roster giving them lighter workload
 - Explains the trade-offs made
+
+---
+
+### Scenario 9: Hire a New Nurse (HRIS)
+
+**User Prompt:**
+```
+We need to hire a new ICU nurse. Add a Senior nurse named "Sarah" with ICU, ACLS, and BLS certifications.
+```
+
+**Expected Behavior:**
+- Agent calls `add_nurse(name="Sarah", seniority_level="Senior", certifications="ICU,ACLS,BLS", contract_type="FullTime")`
+- Confirms the new nurse was added with their assigned ID
+- Shows the new nurse's profile
+
+---
+
+### Scenario 10: Promote a Nurse (HRIS)
+
+**User Prompt:**
+```
+Bob has been doing great work. Please promote him to Mid level.
+```
+
+**Expected Behavior:**
+- Agent calls `promote_nurse(nurse_id="nurse_002", new_level="Mid")`
+- Confirms the promotion
+- Shows updated nurse profile
+
+---
+
+### Scenario 11: Update Certifications (HRIS)
+
+**User Prompt:**
+```
+George just completed his ICU certification. Please add it to his profile.
+```
+
+**Expected Behavior:**
+- Agent calls `update_nurse_certifications(nurse_id="nurse_007", add_certifications="ICU")`
+- Confirms the certification was added
+- Shows updated certifications list
+
+---
+
+### Scenario 12: View Nurse Preferences
+
+**User Prompt:**
+```
+Show me all nurse scheduling preferences - who avoids night shifts and what days they prefer.
+```
+
+**Expected Behavior:**
+- Agent calls `list_nurse_preferences()`
+- Shows formatted table of all preferences
+- Highlights nurses avoiding night shifts
+
+---
+
+### Scenario 13: Check Available Certifications
+
+**User Prompt:**
+```
+What certifications can nurses have? Which ones are required for each ward?
+```
+
+**Expected Behavior:**
+- Agent calls `list_available_certifications()`
+- Shows available certifications (ICU, ACLS, BLS)
+- Shows ward requirements
 
 ---
 
@@ -169,19 +239,38 @@ Which nurses have high fatigue scores? Make sure they get fewer shifts this week
 
 ### Nurses (from mock_hris.json)
 
-| Name    | Seniority | Contract | Certifications | Preferences         |
-|---------|-----------|----------|----------------|---------------------|
-| Alice   | Senior    | FullTime | ACLS, BLS, ICU | Avoids night shifts |
-| Bob     | Junior    | FullTime | BLS            | Prefers Wed/Thu     |
-| Charlie | Mid       | Casual   | ACLS, ICU      | Prefers Fri/Sat/Sun |
+*Note: The system has 19 nurses. Here are the key ones:*
+
+| Name    | Seniority | Contract | Certifications   | Preferences           |
+|---------|-----------|----------|------------------|-----------------------|
+| Bob     | Junior    | FullTime | BLS, ACLS        | Prefers Wed/Thu/Fri   |
+| Charlie | Mid       | FullTime | ACLS, BLS, ICU   | Prefers Fri/Sat/Sun   |
+| Diana   | Senior    | FullTime | ACLS, BLS, ICU   | Prefers Mon/Tue/Wed   |
+| Edward  | Mid       | FullTime | BLS, ACLS        | Avoids night shifts   |
+| Fiona   | Senior    | FullTime | ACLS, BLS, ICU   | Prefers Sat/Sun       |
+| George  | Junior    | FullTime | BLS              | Prefers Mon/Tue       |
+| Hannah  | Mid       | PartTime | ACLS, BLS, ICU   | Avoids night shifts   |
+| Ivan    | Junior    | PartTime | BLS, ACLS        | Prefers Sat/Sun       |
+| Julia   | Senior    | Casual   | ACLS, BLS, ICU   | Prefers Fri/Sat/Sun   |
+| Kevin   | Senior    | FullTime | ACLS, BLS, ICU   | Prefers Mon/Thu       |
+| Laura   | Senior    | FullTime | ACLS, BLS, ICU   | Avoids night shifts   |
 
 ### Current Nurse Stats (from nurse_stats.json)
 
+*Sample stats - values updated dynamically after roster finalization:*
+
 | Nurse   | Shifts (30d) | Weekends | Nights | Fatigue Score |
 |---------|--------------|----------|--------|---------------|
-| Alice   | 14           | 4        | 1      | 0.41 🟡       |
-| Bob     | 11           | 1        | 4      | 0.31 🟢       |
-| Charlie | 7            | 2        | 3      | 0.33 🟢       |
+| Bob     | 14           | 1        | 4      | 0.22 🟢       |
+| Charlie | 13           | 3        | 3      | 0.31 🟢       |
+| Diana   | 17           | 1        | 2      | 0.14 🟢       |
+| Edward  | 11           | 1        | 0      | 0.08 🟢       |
+| Fiona   | 13           | 1        | 2      | 0.14 🟢       |
+
+**Fatigue Levels:**
+- 🟢 Good: < 0.5
+- 🟡 Moderate: >= 0.5 and < 0.8
+- 🔴 High Risk: >= 0.8
 
 ### Shifts (7 days, ~26 total)
 
@@ -227,30 +316,44 @@ Which nurses have high fatigue scores? Make sure they get fewer shifts this week
 ```
 User Request
      ↓
-RosteringCoordinator (gemini-2.5-pro)
+RosteringCoordinator (gemini-2.5-pro) - 21 tools
      │
-     ├── Data Tools
-     │   ├── get_available_nurses
-     │   ├── get_shifts_to_fill
-     │   └── get_regulations
-     │
-     ├── History Tools
+     ├── Query Tools - Nurses
+     │   ├── list_nurses (filter by seniority, contract, certs, fatigue)
+     │   ├── list_nurse_preferences
+     │   ├── get_nurse_info
+     │   ├── get_nurse_availability
      │   ├── get_nurse_stats
-     │   ├── get_shift_history
-     │   ├── get_nurse_history
-     │   └── compare_rosters
+     │   └── get_nurse_history
+     │
+     ├── Query Tools - Shifts & Staffing
+     │   ├── get_upcoming_shifts
+     │   ├── get_staffing_summary
+     │   └── get_shift_history
      │
      ├── Roster Management
-     │   ├── save_draft_roster
+     │   ├── list_pending_rosters
+     │   ├── get_roster
      │   ├── finalize_roster
      │   ├── reject_roster
-     │   └── list_pending_rosters
+     │   └── delete_pending_roster
      │
-     └── Sub-Agents
-         ├── RosterSolver (gemini-2.5-flash)
-         │   └── solve_roster_cp_model (OR-Tools)
-         ├── ComplianceOfficer (gemini-2.5-flash)
-         └── EmpathyAdvocate (gemini-2.5-pro)
+     ├── HRIS Management
+     │   ├── add_nurse
+     │   ├── promote_nurse
+     │   ├── update_nurse_certifications
+     │   ├── update_nurse_preferences
+     │   ├── remove_nurse
+     │   └── list_available_certifications
+     │
+     └── Sub-Agent: RosteringWorkflow (SequentialAgent)
+         │
+         ├── 1. ContextGatherer
+         ├── 2. RosterSolver → generate_roster (OR-Tools)
+         ├── 3. ValidationPipeline (Parallel)
+         │      ├── ComplianceOfficer
+         │      └── EmpathyAdvocate
+         └── 4. RosterPresenter
                 ↓
           Draft Roster
                 ↓
@@ -278,7 +381,7 @@ gcloud auth application-default login
 ```bash
 python -c "from agents.agent import root_agent; print(f'Tools: {len(root_agent.tools)}')"
 ```
-Should output: `Tools: 14`
+Should output: `Tools: 21`
 
 ---
 

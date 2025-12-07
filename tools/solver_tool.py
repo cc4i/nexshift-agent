@@ -1,8 +1,101 @@
 from ortools.sat.python import cp_model
 from models.domain import Nurse, Shift, Roster, Assignment, RosterMetadata, NursePreferences, NurseHistory
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
+from copy import deepcopy
 import json
 import random
+import logging
+
+# Configure logger for solver debugging
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# CONSTANTS
+# =============================================================================
+
+# Seniority level ordering (higher = more senior)
+SENIORITY_ORDER = {"Junior": 1, "Mid": 2, "Senior": 3}
+
+# Maximum weekly hours by contract type
+MAX_HOURS_BY_CONTRACT = {
+    "FullTime": 40,
+    "PartTime": 30,
+    "Casual": 20
+}
+
+# Scheduling constraints
+MAX_CONSECUTIVE_SHIFTS = 3
+MIN_REST_HOURS = 8
+
+# Fatigue thresholds
+FATIGUE_HIGH_THRESHOLD = 0.8
+FATIGUE_MODERATE_THRESHOLD = 0.5
+
+# Fatigue capacity reduction factors
+FATIGUE_HIGH_CAPACITY_FACTOR = 0.5      # 50% capacity when high fatigue
+FATIGUE_MODERATE_CAPACITY_FACTOR = 0.75  # 75% capacity when moderate fatigue
+
+# Objective function weights (positive = bonus, negative = penalty)
+WEIGHT_SENIOR_BONUS = 3
+WEIGHT_PREFERRED_DAY_BONUS = 5
+WEIGHT_FATIGUE_HIGH_PENALTY = -50
+WEIGHT_FATIGUE_MODERATE_PENALTY = -25
+WEIGHT_FATIGUE_WEEKEND_PENALTY = -30
+WEIGHT_FATIGUE_NIGHT_PENALTY = -30
+WEIGHT_AVOID_NIGHT_PENALTY = -50
+WEIGHT_EXCESS_SHIFTS_PENALTY = -10
+WEIGHT_DEFICIT_SHIFTS_PENALTY = -15
+WEIGHT_WEEKEND_EXCESS_PENALTY = -30
+WEIGHT_NIGHT_EXCESS_PENALTY = -30
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _convert_raw_shifts_to_objects(raw_shifts: list) -> list:
+    """
+    Convert raw shift dictionaries to Shift objects.
+
+    Args:
+        raw_shifts: List of shift dicts with keys: id, date, start, end, ward, required_certs, min_level
+
+    Returns:
+        List of Shift objects
+    """
+    shifts_objs = []
+    for s in raw_shifts:
+        date = datetime.strptime(s["date"], "%Y-%m-%d")
+        start_hour, start_min = map(int, s["start"].split(":"))
+        end_hour, end_min = map(int, s["end"].split(":"))
+
+        start_time = date.replace(hour=start_hour, minute=start_min)
+        if end_hour < start_hour:
+            # Overnight shift
+            end_time = (date + timedelta(days=1)).replace(hour=end_hour, minute=end_min)
+        else:
+            end_time = date.replace(hour=end_hour, minute=end_min)
+
+        shifts_objs.append(Shift(
+            id=s["id"],
+            ward=s["ward"],
+            start_time=start_time,
+            end_time=end_time,
+            required_certifications=s["required_certs"],
+            min_level=s["min_level"]
+        ))
+    return shifts_objs
+
+
+def _is_night_shift(shift) -> bool:
+    """Check if a shift is a night shift (starts at 20:00+ or before 06:00)."""
+    return shift.start_time.hour >= 20 or shift.start_time.hour < 6
+
+
+def _generate_roster_id() -> str:
+    """Generate a unique roster ID with timestamp and random suffix."""
+    return f"roster_{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000, 9999)}"
 
 
 def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: str = "{}") -> str:
@@ -24,7 +117,6 @@ def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: s
     # Import here to avoid circular imports
     from tools.data_loader import load_nurses, generate_shifts as gen_shifts
     from tools.history_tools import _load_json, NURSE_STATS_FILE, get_next_unscheduled_date, check_period_overlap
-    from datetime import datetime as dt, timedelta
 
     # Load data automatically
     nurses_objs = load_nurses()
@@ -32,12 +124,12 @@ def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: s
     # Parse start date - use next unscheduled date if not provided
     if start_date:
         try:
-            parsed_date = dt.strptime(start_date, "%Y-%m-%d")
+            parsed_date = datetime.strptime(start_date, "%Y-%m-%d")
         except ValueError:
             return json.dumps({"error": f"Invalid date format '{start_date}'. Use YYYY-MM-DD."})
     else:
         next_date = get_next_unscheduled_date()
-        parsed_date = dt.strptime(next_date, "%Y-%m-%d")
+        parsed_date = datetime.strptime(next_date, "%Y-%m-%d")
 
     # Check for overlap with existing rosters
     overlap_info = check_period_overlap(parsed_date.strftime("%Y-%m-%d"), num_days)
@@ -70,30 +162,9 @@ def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: s
             warning["action_required"] = "Delete draft roster(s) or use suggested_start date"
             return json.dumps(warning)
 
-    # Generate shifts
+    # Generate shifts and convert to Shift objects
     raw_shifts = gen_shifts(start_date=parsed_date, num_days=num_days)
-
-    # Convert raw shifts to Shift objects
-    shifts_objs = []
-    for s in raw_shifts:
-        date = dt.strptime(s["date"], "%Y-%m-%d")
-        start_hour, start_min = map(int, s["start"].split(":"))
-        end_hour, end_min = map(int, s["end"].split(":"))
-
-        start_time = date.replace(hour=start_hour, minute=start_min)
-        if end_hour < start_hour:
-            end_time = (date + timedelta(days=1)).replace(hour=end_hour, minute=end_min)
-        else:
-            end_time = date.replace(hour=end_hour, minute=end_min)
-
-        shifts_objs.append(Shift(
-            id=s["id"],
-            ward=s["ward"],
-            start_time=start_time,
-            end_time=end_time,
-            required_certifications=s["required_certs"],
-            min_level=s["min_level"]
-        ))
+    shifts_objs = _convert_raw_shifts_to_objects(raw_shifts)
 
     # Load nurse stats for fatigue-aware scheduling
     nurse_stats = _load_json(NURSE_STATS_FILE)
@@ -107,7 +178,6 @@ def _get_shift_duration_hours(shift) -> float:
     duration = shift.end_time - shift.start_time
     # Handle overnight shifts
     if duration.total_seconds() < 0:
-        from datetime import timedelta
         duration = duration + timedelta(days=1)
     return duration.total_seconds() / 3600
 
@@ -122,15 +192,6 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
     - Seniority gaps
     - Recommendations
     """
-    from collections import defaultdict
-
-    # Contract type weekly hour limits
-    MAX_HOURS = {
-        "FullTime": 40,
-        "PartTime": 30,
-        "Casual": 20
-    }
-
     report = {
         "summary": "",
         "capacity_analysis": {},
@@ -164,13 +225,13 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
     total_nurse_capacity_hours = 0
     nurse_capacity = {}
     for n in nurses_objs:
-        max_hours = MAX_HOURS.get(n.contract_type, 40)
+        max_hours = MAX_HOURS_BY_CONTRACT.get(n.contract_type, 40)
         fatigue = nurse_stats.get(n.id, {}).get("fatigue_score", 0)
         # Reduce capacity for fatigued nurses
-        if fatigue >= 0.8:
-            effective_hours = max_hours * 0.5
-        elif fatigue >= 0.5:
-            effective_hours = max_hours * 0.75
+        if fatigue >= FATIGUE_HIGH_THRESHOLD:
+            effective_hours = max_hours * FATIGUE_HIGH_CAPACITY_FACTOR
+        elif fatigue >= FATIGUE_MODERATE_THRESHOLD:
+            effective_hours = max_hours * FATIGUE_MODERATE_CAPACITY_FACTOR
         else:
             effective_hours = max_hours
         nurse_capacity[n.id] = {
@@ -241,7 +302,6 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
     # =========================================================================
     # 3. SENIORITY GAP ANALYSIS
     # =========================================================================
-    seniority_order = {"Junior": 1, "Mid": 2, "Senior": 3}
 
     shifts_by_level = defaultdict(list)
     for s in shifts_objs:
@@ -256,7 +316,7 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
 
         # Find nurses who can cover this level
         eligible_nurses = [n for n in nurses_objs
-                          if seniority_order.get(n.seniority_level, 0) >= seniority_order.get(level, 0)]
+                          if SENIORITY_ORDER.get(n.seniority_level, 0) >= SENIORITY_ORDER.get(level, 0)]
 
         eligible_capacity = sum(nurse_capacity[n.id]["effective_hours"] for n in eligible_nurses)
 
@@ -321,13 +381,13 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
     fatigued_nurses = []
     for n in nurses_objs:
         fatigue = nurse_stats.get(n.id, {}).get("fatigue_score", 0)
-        if fatigue >= 0.5:
+        if fatigue >= FATIGUE_MODERATE_THRESHOLD:
             fatigued_nurses.append({
                 "nurse": n.name,
                 "nurse_id": n.id,
                 "fatigue_score": round(fatigue, 2),
-                "status": "HIGH RISK" if fatigue >= 0.8 else "MODERATE",
-                "capacity_reduction": "50%" if fatigue >= 0.8 else "25%"
+                "status": "HIGH RISK" if fatigue >= FATIGUE_HIGH_THRESHOLD else "MODERATE",
+                "capacity_reduction": f"{int((1 - FATIGUE_HIGH_CAPACITY_FACTOR) * 100)}%" if fatigue >= FATIGUE_HIGH_THRESHOLD else f"{int((1 - FATIGUE_MODERATE_CAPACITY_FACTOR) * 100)}%"
             })
 
     if fatigued_nurses:
@@ -357,7 +417,6 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
         # Analyze scheduling constraint conflicts
 
         # 6a. Check shifts per day vs nurses available per day
-        from collections import defaultdict
         shifts_per_day = defaultdict(list)
         for s in shifts_objs:
             day_key = s.start_time.date()
@@ -551,8 +610,6 @@ def simulate_staffing_change(
     """
     from tools.data_loader import load_nurses, generate_shifts as gen_shifts
     from tools.history_tools import _load_json, NURSE_STATS_FILE, get_next_unscheduled_date
-    from datetime import datetime as dt, timedelta
-    from copy import deepcopy
 
     # Load current data
     nurses_objs = load_nurses()
@@ -561,33 +618,16 @@ def simulate_staffing_change(
     # Determine start date
     if start_date:
         try:
-            parsed_date = dt.strptime(start_date, "%Y-%m-%d")
+            parsed_date = datetime.strptime(start_date, "%Y-%m-%d")
         except ValueError:
             return json.dumps({"error": f"Invalid date format '{start_date}'. Use YYYY-MM-DD."})
     else:
         next_date = get_next_unscheduled_date()
-        parsed_date = dt.strptime(next_date, "%Y-%m-%d")
+        parsed_date = datetime.strptime(next_date, "%Y-%m-%d")
 
-    # Generate shifts
+    # Generate shifts and convert to Shift objects
     raw_shifts = gen_shifts(start_date=parsed_date, num_days=num_days)
-    shifts_objs = []
-    for s in raw_shifts:
-        date = dt.strptime(s["date"], "%Y-%m-%d")
-        start_hour, start_min = map(int, s["start"].split(":"))
-        end_hour, end_min = map(int, s["end"].split(":"))
-        start_time = date.replace(hour=start_hour, minute=start_min)
-        if end_hour < start_hour:
-            end_time = (date + timedelta(days=1)).replace(hour=end_hour, minute=end_min)
-        else:
-            end_time = date.replace(hour=end_hour, minute=end_min)
-        shifts_objs.append(Shift(
-            id=s["id"],
-            ward=s["ward"],
-            start_time=start_time,
-            end_time=end_time,
-            required_certifications=s["required_certs"],
-            min_level=s["min_level"]
-        ))
+    shifts_objs = _convert_raw_shifts_to_objects(raw_shifts)
 
     # Get current analysis (before changes)
     before_analysis = _analyze_infeasibility(nurses_objs, shifts_objs, nurse_stats)
@@ -614,13 +654,12 @@ def simulate_staffing_change(
                 "example": "simulate_staffing_change(action='promote', nurse_id='nurse_002', new_level='Mid')"
             })
 
-        seniority_order = {"Junior": 1, "Mid": 2, "Senior": 3}
-        target_level_num = seniority_order.get(new_level, 0)
+            target_level_num = SENIORITY_ORDER.get(new_level, 0)
 
         promoted = False
         for n in simulated_nurses:
             if n.id == nurse_id:
-                current_level_num = seniority_order.get(n.seniority_level, 0)
+                current_level_num = SENIORITY_ORDER.get(n.seniority_level, 0)
                 if target_level_num <= current_level_num:
                     return json.dumps({
                         "error": f"{n.name} is already {n.seniority_level}. Cannot promote to {new_level}."
@@ -680,7 +719,7 @@ def simulate_staffing_change(
             existing_coverage = sum(
                 g["nurses_needed"] * 40
                 for g in gaps_to_fill
-                if seniority_order.get(g["min_level"], 0) >= seniority_order.get(level, 0)
+                if SENIORITY_ORDER.get(g["min_level"], 0) >= SENIORITY_ORDER.get(level, 0)
             )
 
             if existing_coverage < shortage:
@@ -713,7 +752,6 @@ def simulate_staffing_change(
             result["recommendations"].append("No obvious hiring needs detected. Issue may be constraint-related.")
         else:
             # Create simulated nurses for each gap
-            seniority_order = {"Junior": 1, "Mid": 2, "Senior": 3}
             hire_counter = 1
 
             for gap in gaps_to_fill:
@@ -787,7 +825,6 @@ def simulate_staffing_change(
 
 def _shifts_overlap_or_too_close(shift1, shift2, min_rest_hours: int = 8) -> bool:
     """Check if two shifts are too close (less than min_rest_hours apart)."""
-    from datetime import timedelta
     min_rest = timedelta(hours=min_rest_hours)
 
     # Get end of first shift and start of second
@@ -804,16 +841,17 @@ def _shifts_overlap_or_too_close(shift1, shift2, min_rest_hours: int = 8) -> boo
 
 def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: dict) -> str:
     """Internal solver logic with compliance constraints."""
-    model = cp_model.CpModel()
+    # Early validation - prevent division by zero and empty input errors
+    if not nurses_objs:
+        logger.warning("No nurses available for scheduling")
+        return json.dumps({"error": "No nurses available for scheduling"})
+    if not shifts_objs:
+        logger.warning("No shifts to schedule")
+        return json.dumps({"error": "No shifts to schedule"})
 
-    # Contract type weekly hour limits
-    MAX_HOURS = {
-        "FullTime": 40,
-        "PartTime": 30,
-        "Casual": 20
-    }
-    MAX_CONSECUTIVE_SHIFTS = 3
-    MIN_REST_HOURS = 8
+    logger.info(f"Starting roster generation: {len(nurses_objs)} nurses, {len(shifts_objs)} shifts")
+
+    model = cp_model.CpModel()
 
     # Variables: assignments[(n, s)] is 1 if nurse n works shift s, 0 otherwise
     assignments = {}
@@ -834,17 +872,16 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
                     model.Add(assignments[(n.id, s.id)] == 0)
 
     # Hard Constraint 3: Seniority level requirements
-    seniority_order = {"Junior": 1, "Mid": 2, "Senior": 3}
     for s in shifts_objs:
         for n in nurses_objs:
-            nurse_level = seniority_order.get(n.seniority_level, 0)
-            required_level = seniority_order.get(s.min_level, 0)
+            nurse_level = SENIORITY_ORDER.get(n.seniority_level, 0)
+            required_level = SENIORITY_ORDER.get(s.min_level, 0)
             if nurse_level < required_level:
                 model.Add(assignments[(n.id, s.id)] == 0)
 
     # Hard Constraint 4: Maximum weekly hours per contract type
     for n in nurses_objs:
-        max_hours = MAX_HOURS.get(n.contract_type, 40)
+        max_hours = MAX_HOURS_BY_CONTRACT.get(n.contract_type, 40)
         # Calculate total hours for this nurse
         # Each shift duration in hours, multiplied by assignment variable
         total_hours_terms = []
@@ -932,8 +969,8 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
                     continue
 
             # Check seniority level eligibility (Senior >= any min_level)
-            nurse_level = seniority_order.get(n.seniority_level, 0)
-            required_level = seniority_order.get(s.min_level, 0)
+            nurse_level = SENIORITY_ORDER.get(n.seniority_level, 0)
+            required_level = SENIORITY_ORDER.get(s.min_level, 0)
             if nurse_level < required_level:
                 continue
 
@@ -942,9 +979,16 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
         # Each shift must have at least one Senior nurse
         if eligible_senior_assignments:
             model.Add(sum(eligible_senior_assignments) >= 1)
+        else:
+            # No eligible Senior nurse for this shift - this will make the problem infeasible
+            # Log the issue for debugging - the infeasibility analysis will explain why
+            logger.warning(f"No eligible Senior nurse for shift {s.id} ({s.ward}, {s.start_time}). "
+                          f"Required certs: {s.required_certifications}, min_level: {s.min_level}")
+            # Force infeasibility by requiring at least 1 from an empty set
+            # This ensures the solver fails and triggers proper analysis
+            model.Add(sum([]) >= 1)
 
     # Hard Constraint 8: Honor adhoc time-off requests (high priority)
-    from datetime import timedelta as td
     for n in nurses_objs:
         if n.preferences and n.preferences.adhoc_requests:
             for request in n.preferences.adhoc_requests:
@@ -982,40 +1026,38 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
         for n in nurses_objs:
             if n.seniority_level == "Senior":
                 # Bonus for having a Senior nurse on shift
-                objective_terms.append(3 * assignments[(n.id, s.id)])
+                objective_terms.append(WEIGHT_SENIOR_BONUS * assignments[(n.id, s.id)])
 
     for n in nurses_objs:
         stats = nurse_stats.get(n.id, {})
         fatigue_score = stats.get("fatigue_score", 0.0)
 
         for s in shifts_objs:
-            # Fatigue-aware scheduling - STRONGER penalties
-            # Fatigue levels: 0.0-0.4 (Good), 0.5-0.7 (Moderate), 0.8-1.0 (High Risk)
-            if fatigue_score >= 0.8:
-                # High fatigue - strong penalty, especially for difficult shifts
-                objective_terms.append(-50 * assignments[(n.id, s.id)])
-            elif fatigue_score >= 0.5:
-                objective_terms.append(-25 * assignments[(n.id, s.id)])
+            # Fatigue-aware scheduling
+            if fatigue_score >= FATIGUE_HIGH_THRESHOLD:
+                objective_terms.append(WEIGHT_FATIGUE_HIGH_PENALTY * assignments[(n.id, s.id)])
+            elif fatigue_score >= FATIGUE_MODERATE_THRESHOLD:
+                objective_terms.append(WEIGHT_FATIGUE_MODERATE_PENALTY * assignments[(n.id, s.id)])
 
             # Extra penalty for weekend/night shifts for fatigued nurses
-            if fatigue_score >= 0.5:
+            if fatigue_score >= FATIGUE_MODERATE_THRESHOLD:
                 if s.start_time.weekday() >= 5:
-                    objective_terms.append(-30 * assignments[(n.id, s.id)])
-                if s.start_time.hour >= 20 or s.start_time.hour < 6:
-                    objective_terms.append(-30 * assignments[(n.id, s.id)])
+                    objective_terms.append(WEIGHT_FATIGUE_WEEKEND_PENALTY * assignments[(n.id, s.id)])
+                if _is_night_shift(s):
+                    objective_terms.append(WEIGHT_FATIGUE_NIGHT_PENALTY * assignments[(n.id, s.id)])
 
-            # Preference: Avoid night shifts - MUCH stronger penalty
+            # Preference: Avoid night shifts
             if n.preferences and n.preferences.avoid_night_shifts:
-                if s.start_time.hour >= 20 or s.start_time.hour < 6:
-                    objective_terms.append(-50 * assignments[(n.id, s.id)])
+                if _is_night_shift(s):
+                    objective_terms.append(WEIGHT_AVOID_NIGHT_PENALTY * assignments[(n.id, s.id)])
 
             # Preference: Preferred days bonus
             if n.preferences and n.preferences.preferred_days:
                 day_name = s.start_time.strftime("%A")
                 if day_name in n.preferences.preferred_days:
-                    objective_terms.append(5 * assignments[(n.id, s.id)])
+                    objective_terms.append(WEIGHT_PREFERRED_DAY_BONUS * assignments[(n.id, s.id)])
 
-    # Fairness: Even distribution of shifts - STRONGER penalties
+    # Fairness: Even distribution of shifts
     for n in nurses_objs:
         nurse_total = sum(assignments[(n.id, s.id)] for s in shifts_objs)
         fair_share = len(shifts_objs) // len(nurses_objs)
@@ -1024,11 +1066,11 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
         excess = model.NewIntVar(0, len(shifts_objs), f'excess_{n.id}')
         deficit = model.NewIntVar(0, len(shifts_objs), f'deficit_{n.id}')
         model.Add(excess >= nurse_total - fair_share)
-        model.Add(deficit >= fair_share - nurse_total)  # Corrected deficit calculation
-        objective_terms.append(-10 * excess)   # Stronger penalty for overwork
-        objective_terms.append(-15 * deficit)  # Even stronger penalty for underutilization
+        model.Add(deficit >= fair_share - nurse_total)
+        objective_terms.append(WEIGHT_EXCESS_SHIFTS_PENALTY * excess)
+        objective_terms.append(WEIGHT_DEFICIT_SHIFTS_PENALTY * deficit)
 
-    # Fairness: Distribute weekend shifts fairly - MUCH stronger penalty
+    # Fairness: Distribute weekend shifts fairly
     weekend_shifts = [s for s in shifts_objs if s.start_time.weekday() >= 5]
     if weekend_shifts:
         fair_weekend_share = max(1, len(weekend_shifts) // len(nurses_objs))
@@ -1036,10 +1078,10 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
             weekend_total = sum(assignments[(n.id, s.id)] for s in weekend_shifts)
             weekend_excess = model.NewIntVar(0, len(weekend_shifts), f'weekend_excess_{n.id}')
             model.Add(weekend_excess >= weekend_total - fair_weekend_share)
-            objective_terms.append(-30 * weekend_excess)  # Much stronger penalty
+            objective_terms.append(WEIGHT_WEEKEND_EXCESS_PENALTY * weekend_excess)
 
-    # Fairness: Distribute night shifts fairly among eligible nurses - MUCH stronger penalty
-    night_shifts = [s for s in shifts_objs if s.start_time.hour >= 20 or s.start_time.hour < 6]
+    # Fairness: Distribute night shifts fairly among eligible nurses
+    night_shifts = [s for s in shifts_objs if _is_night_shift(s)]
     if night_shifts:
         # Only count nurses who don't avoid night shifts
         eligible_for_nights = [n for n in nurses_objs
@@ -1050,7 +1092,7 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
                 night_total = sum(assignments[(n.id, s.id)] for s in night_shifts)
                 night_excess = model.NewIntVar(0, len(night_shifts), f'night_excess_{n.id}')
                 model.Add(night_excess >= night_total - fair_night_share)
-                objective_terms.append(-30 * night_excess)  # Much stronger penalty
+                objective_terms.append(WEIGHT_NIGHT_EXCESS_PENALTY * night_excess)
 
     if objective_terms:
         model.Maximize(sum(objective_terms))
@@ -1061,7 +1103,20 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
     solver.parameters.num_search_workers = 8
     # Add random seed to get different solutions on regeneration
     solver.parameters.random_seed = random.randint(0, 2**31 - 1)
+
+    logger.debug(f"Solver configured: max_time=30s, workers=8, seed={solver.parameters.random_seed}")
+
     status = solver.Solve(model)
+
+    # Log solver results
+    status_name = {
+        cp_model.OPTIMAL: "OPTIMAL",
+        cp_model.FEASIBLE: "FEASIBLE",
+        cp_model.INFEASIBLE: "INFEASIBLE",
+        cp_model.MODEL_INVALID: "MODEL_INVALID",
+        cp_model.UNKNOWN: "UNKNOWN"
+    }.get(status, "UNKNOWN")
+    logger.info(f"Solver finished: status={status_name}, time={solver.WallTime():.2f}s")
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         roster_assignments = []
@@ -1070,8 +1125,9 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
                 if solver.Value(assignments[(n.id, s.id)]) == 1:
                     roster_assignments.append(Assignment(nurse_id=n.id, shift_id=s.id))
 
+        roster_id = _generate_roster_id()
         roster = Roster(
-            id=f"roster_{datetime.now().strftime('%Y%m%d%H%M')}",
+            id=roster_id,
             assignments=roster_assignments,
             metadata=RosterMetadata(
                 generated_at=datetime.now(),
@@ -1079,9 +1135,11 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
                 empathy_score=0.0
             )
         )
+        logger.info(f"Roster generated: id={roster_id}, assignments={len(roster_assignments)}")
         return json.dumps(roster.model_dump(), default=str)
     else:
         # Analyze why the solver failed and provide recommendations
+        logger.warning("Solver failed to find feasible solution, running infeasibility analysis")
         analysis = _analyze_infeasibility(nurses_objs, shifts_objs, nurse_stats)
         return json.dumps({
             "error": "No feasible solution found",
@@ -1089,143 +1147,3 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
         }, default=str)
 
 
-def solve_roster_cp_model(nurses_json: str, shifts_json: str, constraints_json: str, nurse_stats_json: str = "{}") -> str:
-    """
-    Solves the nurse rostering problem using Google OR-Tools.
-
-    Args:
-        nurses_json: JSON string containing list of nurse objects.
-        shifts_json: JSON string containing list of shift objects.
-        constraints_json: JSON string containing list of constraint objects.
-        nurse_stats_json: Optional JSON string containing nurse fatigue stats from nurse_stats.json.
-                         Used to reduce shifts for fatigued nurses.
-
-    Returns:
-        JSON string containing the generated roster.
-    """
-    # Parse JSON inputs
-    nurses = json.loads(nurses_json)
-    shifts = json.loads(shifts_json)
-    _ = json.loads(constraints_json)  # constraints parsed for future use
-    nurse_stats = json.loads(nurse_stats_json) if nurse_stats_json else {}
-
-    # Reconstruct models from dicts for internal logic
-    nurses_objs = [Nurse(**n) for n in nurses]
-    shifts_objs = [Shift(**s) for s in shifts]
-
-    model = cp_model.CpModel()
-
-    # Variables: assignments[(n, s)] is 1 if nurse n works shift s, 0 otherwise
-    assignments = {}
-    for n in nurses_objs:
-        for s in shifts_objs:
-            assignments[(n.id, s.id)] = model.NewBoolVar(f'shift_n{n.id}_s{s.id}')
-
-    # Hard Constraint 1: Each shift must be assigned to exactly one nurse
-    for s in shifts_objs:
-        model.AddExactlyOne(assignments[(n.id, s.id)] for n in nurses_objs)
-
-    # Hard Constraint 2: Certification requirements
-    for s in shifts_objs:
-        for n in nurses_objs:
-            # If shift requires certifications the nurse doesn't have, prevent assignment
-            if s.required_certifications:
-                has_all_certs = all(cert in n.certifications for cert in s.required_certifications)
-                if not has_all_certs:
-                    model.Add(assignments[(n.id, s.id)] == 0)
-
-    # Hard Constraint 3: Seniority level requirements
-    seniority_order = {"Junior": 1, "Mid": 2, "Senior": 3}
-    for s in shifts_objs:
-        for n in nurses_objs:
-            nurse_level = seniority_order.get(n.seniority_level, 0)
-            required_level = seniority_order.get(s.min_level, 0)
-            if nurse_level < required_level:
-                model.Add(assignments[(n.id, s.id)] == 0)
-
-    # Soft Constraints (Preferences) - build objective function
-    objective_terms = []
-
-    # Add small random noise to each assignment for variation on regeneration
-    # This ensures equivalent solutions get slightly different scores,
-    # causing the solver to pick different valid schedules each time
-    # Note: CP-SAT requires integer coefficients, so we use small integers (±1)
-    for n in nurses_objs:
-        for s in shifts_objs:
-            noise = random.randint(-1, 1)
-            if noise != 0:
-                objective_terms.append(noise * assignments[(n.id, s.id)])
-
-    for n in nurses_objs:
-        # Get fatigue score for this nurse (default to 0 if not found)
-        stats = nurse_stats.get(n.id, {})
-        fatigue_score = stats.get("fatigue_score", 0.0)
-
-        for s in shifts_objs:
-            # Fatigue-aware scheduling: Penalize assigning shifts to fatigued nurses
-            # Fatigue levels: 0.0-0.4 (Good), 0.5-0.7 (Moderate), 0.8-1.0 (High Risk)
-            if fatigue_score >= 0.8:
-                # High risk - strong penalty to reduce shifts
-                objective_terms.append(-20 * assignments[(n.id, s.id)])
-            elif fatigue_score >= 0.5:
-                # Moderate - medium penalty
-                objective_terms.append(-8 * assignments[(n.id, s.id)])
-            # Good fatigue (< 0.5) - no penalty
-
-            # Extra penalty for assigning weekend/night shifts to fatigued nurses
-            if fatigue_score >= 0.5:
-                # Check if shift is on weekend (Saturday=5, Sunday=6)
-                if s.start_time.weekday() >= 5:
-                    objective_terms.append(-5 * assignments[(n.id, s.id)])
-                # Check if night shift
-                if s.start_time.hour >= 20 or s.start_time.hour < 6:
-                    objective_terms.append(-5 * assignments[(n.id, s.id)])
-
-            # Preference: Avoid night shifts (shifts starting at 20:00 or later)
-            if n.preferences and n.preferences.avoid_night_shifts and s.start_time.hour >= 20:
-                objective_terms.append(-10 * assignments[(n.id, s.id)])
-
-            # Preference: Preferred days bonus
-            if n.preferences and n.preferences.preferred_days:
-                day_name = s.start_time.strftime("%A")
-                if day_name in n.preferences.preferred_days:
-                    objective_terms.append(5 * assignments[(n.id, s.id)])
-
-    # Fairness: Encourage even distribution of shifts
-    # Add a small penalty for each shift a nurse takes to spread shifts around
-    for n in nurses_objs:
-        nurse_total = sum(assignments[(n.id, s.id)] for s in shifts_objs)
-        # Penalize having more than fair share of shifts
-        fair_share = len(shifts_objs) // len(nurses_objs)
-        excess = model.NewIntVar(0, len(shifts_objs), f'excess_{n.id}')
-        model.Add(excess >= nurse_total - fair_share)
-        objective_terms.append(-3 * excess)  # Penalty for excess shifts
-
-    if objective_terms:
-        model.Maximize(sum(objective_terms))
-
-    # Solve
-    solver = cp_model.CpSolver()
-    # Add random seed to get different solutions on regeneration
-    solver.parameters.random_seed = random.randint(0, 2**31 - 1)
-    status = solver.Solve(model)
-
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        roster_assignments = []
-        for n in nurses_objs:
-            for s in shifts_objs:
-                if solver.Value(assignments[(n.id, s.id)]) == 1:
-                    roster_assignments.append(Assignment(nurse_id=n.id, shift_id=s.id))
-
-        roster = Roster(
-            id=f"roster_{datetime.now().strftime('%Y%m%d%H%M')}",
-            assignments=roster_assignments,
-            metadata=RosterMetadata(
-                generated_at=datetime.now(),
-                compliance_status="Pending",
-                empathy_score=0.0
-            )
-        )
-        return json.dumps(roster.model_dump(), default=str)
-    else:
-        return json.dumps({"error": "No feasible solution found."})
