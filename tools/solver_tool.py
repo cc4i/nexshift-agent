@@ -98,6 +98,37 @@ def _generate_roster_id() -> str:
     return f"roster_{datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000, 9999)}"
 
 
+def _auto_save_roster(roster_id: str, roster_dict: dict, shifts_objs: list) -> None:
+    """
+    Automatically save roster to disk when generated.
+    This ensures the roster file exists even if the LLM doesn't call save_draft_roster().
+    """
+    import os
+
+    ROSTERS_DIR = os.path.join(os.path.dirname(__file__), "../data/rosters")
+
+    # Calculate period from shifts
+    if shifts_objs:
+        dates = [s.start_time.strftime("%Y-%m-%d") for s in shifts_objs]
+        roster_dict["period"] = {
+            "start": min(dates),
+            "end": max(dates)
+        }
+
+    # Set status
+    roster_dict["status"] = "draft"
+    roster_dict["generated_at"] = datetime.now().isoformat()
+
+    # Save to file
+    roster_file = os.path.join(ROSTERS_DIR, f"{roster_id}.json")
+    try:
+        with open(roster_file, "w") as f:
+            json.dump(roster_dict, f, indent=2, default=str)
+        logger.info(f"Roster auto-saved to {roster_file}")
+    except Exception as e:
+        logger.error(f"Failed to auto-save roster: {e}")
+
+
 def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: str = "{}") -> str:
     """
     Generates an optimal nurse roster using OR-Tools constraint solver.
@@ -1154,7 +1185,12 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
             )
         )
         logger.info(f"Roster generated: id={roster_id}, assignments={len(roster_assignments)}")
-        return json.dumps(roster.model_dump(), default=str)
+
+        # Auto-save roster to disk immediately (don't rely on LLM calling save_draft_roster)
+        roster_dict = roster.model_dump()
+        _auto_save_roster(roster_id, roster_dict, shifts_objs)
+
+        return json.dumps(roster_dict, default=str)
     else:
         # Analyze why the solver failed and provide recommendations
         logger.warning("Solver failed to find feasible solution, running infeasibility analysis")

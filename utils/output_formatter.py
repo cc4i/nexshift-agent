@@ -45,8 +45,13 @@ class OutputFormatter:
                bool(re.search(r'(ALL NURSES|SENIOR NURSES|AVAILABLE NURSES).*={10,}', text, re.I | re.S))
 
     def _is_roster(self, text: str) -> bool:
-        return bool(re.search(r'roster_\d+', text, re.I)) and \
-               bool(re.search(r'assignments|nurse_id.*shift_id|Status:', text, re.I))
+        # Detect roster output that needs calendar formatting
+        # Match patterns like "ROSTER:" or roster IDs with assignments
+        # BUT exclude list outputs (ALL ROSTERS, PENDING ROSTERS)
+        if re.search(r'ALL ROSTERS|PENDING ROSTERS', text, re.I):
+            return False
+        return bool(re.search(r'ROSTER[:\s].*roster_\d+', text, re.I)) or \
+               bool(re.search(r'ASSIGNMENTS:.*\d{4}-\d{2}-\d{2}', text, re.I | re.S))
 
     def _is_availability(self, text: str) -> bool:
         return bool(re.search(r'NURSE AVAILABILITY.*\d{4}-\d{2}-\d{2}', text, re.I))
@@ -63,7 +68,8 @@ class OutputFormatter:
         return bool(re.search(r'SHIFTS TO BE FILLED', text, re.I))
 
     def _is_pending_rosters(self, text: str) -> bool:
-        return bool(re.search(r'PENDING ROSTERS', text, re.I))
+        # Disabled - the raw output is already well-formatted
+        return False
 
     # =========================================================================
     # Formatting methods
@@ -236,7 +242,13 @@ class OutputFormatter:
 
                     if nurse_id not in nurse_schedule:
                         nurse_schedule[nurse_id] = {}
-                    nurse_schedule[nurse_id][current_date] = f"{ward}-{shift_type}"
+                    
+                    val = f"{ward}-{shift_type}"
+                    if current_date in nurse_schedule[nurse_id]:
+                        nurse_schedule[nurse_id][current_date] += " " + val
+                    else:
+                        nurse_schedule[nurse_id][current_date] = val
+                    
                     nurse_names[nurse_id] = name
 
             if not nurse_schedule:
@@ -294,7 +306,7 @@ class OutputFormatter:
                         cell = nurse_schedule.get(nurse_id, {}).get(date_str, "-")
                         row.append(cell)
                         if cell != "-":
-                            nurse_total += 1
+                            nurse_total += len(cell.split(" "))
 
                     row.append(str(nurse_total))
                     result += "| " + " | ".join(row) + " |\n"

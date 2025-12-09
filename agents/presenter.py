@@ -100,7 +100,9 @@ This roster has been saved as a draft.
 Reply "approve" to finalize or "reject [reason]" to reject.
 ```
 
-3. Save the roster as a draft using save_draft_roster()
+3. Save the roster as a draft using save_draft_roster() - ONLY call this ONCE per roster
+   - The tool is idempotent - if already saved, it will return success without duplicating
+   - Do NOT call save_draft_roster multiple times for the same roster
 4. Wait for user response:
    - If user says "approve" → call finalize_roster()
    - If user says "reject" → call reject_roster() with the reason
@@ -115,7 +117,7 @@ Reply "approve" to finalize or "reject [reason]" to reject.
 """
 
 
-def create_presenter_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
+def create_presenter_agent(model_name: str = "gemini-2.5-flash") -> LlmAgent:
     return LlmAgent(
         name="RosterPresenter",
         model=model_name,

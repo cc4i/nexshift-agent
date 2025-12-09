@@ -29,6 +29,7 @@ from tools.history_tools import (
     get_shift_history,
     get_nurse_history
 )
+from tools.data_loader import get_regulations
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,15 @@ def create_rostering_workflow() -> SequentialAgent:
 COORDINATOR_INSTRUCTION = """
 You are the RosteringCoordinator, the main orchestrator for a nurse rostering system.
 
+## IMPORTANT: Preserving Formatted Output
+
+Many tools return pre-formatted text with calendar views, tables, and structured layouts.
+When a tool returns formatted output (with newlines, separators like "===", tables, etc.):
+- Output the tool result EXACTLY as returned
+- Do NOT summarize, condense, or reformat it
+- Do NOT put it all on one line
+- Just present the formatted output directly to the user
+
 ## Query Capabilities
 
 You can answer questions about nurses, shifts, and staffing:
@@ -102,13 +112,26 @@ You can answer questions about nurses, shifts, and staffing:
 - **get_upcoming_shifts(days)**: Show shifts needing assignment (default: 7 days)
 - **get_staffing_summary()**: High-level overview with alerts
 - **get_shift_history(weeks)**: Historical roster logs
+- **get_regulations()**: Display hospital regulations and labor laws for nurse scheduling
 
 ### Roster Management
 - **list_pending_rosters()**: Show drafts awaiting approval
-- **get_roster(roster_id)**: View a roster's full details and assignments
+- **list_all_rosters()**: Show ALL rosters (drafts, finalized, rejected) with status
+- **get_roster(roster_id)**: View a single roster's calendar details
+- **get_rosters_by_date_range(start_date, end_date)**: View schedule across a date range (may combine multiple rosters)
+  Use this when user asks for a date range like "show me 2025-12-05 to 2025-12-15"
+  IMPORTANT: This tool returns a pre-formatted calendar view with newlines.
+  You MUST output the tool's result EXACTLY as returned - do NOT summarize,
+  condense, or reformat it. Just output the entire tool result verbatim.
 - **finalize_roster(roster_id)**: Approve a draft roster
 - **reject_roster(roster_id, reason)**: Reject a draft roster
-- **delete_pending_roster(roster_id)**: Permanently delete a draft/rejected roster
+- **delete_roster(roster_id)**: Permanently delete a draft/rejected roster
+
+### Direct Validation (without full workflow)
+Use these to validate a specific roster without running the full generation workflow:
+- **validate_roster_compliance(roster_id)**: Check certification, seniority, and senior coverage compliance
+- **validate_weekly_hours(roster_id)**: Check weekly hour limits per contract type
+- **analyze_roster_fairness(roster_id)**: Check empathy score, preference violations, burnout risks
 
 ### HRIS Management (Hiring, Promotions, Certifications)
 - **add_nurse(name, seniority_level, contract_type, certifications, ...)**: Add a new nurse to the system
@@ -146,8 +169,9 @@ For roster generation requests, delegate to the RosteringWorkflow sub-agent whic
 
 ## Response Style
 
-- Be professional and concise
-- Present information in a readable format
+- Be professional
+- For formatted tool output (calendars, tables, reports), present it EXACTLY as returned
+- For simple queries or your own responses, be concise
 - Use the appropriate query tool based on user intent
 """
 
@@ -158,7 +182,8 @@ from tools.history_tools import (
     reject_roster,
     delete_roster,
     delete_pending_roster,
-    get_roster
+    get_roster,
+    get_rosters_by_date_range
 )
 from tools.hris_tools import (
     add_nurse,
@@ -167,6 +192,13 @@ from tools.hris_tools import (
     update_nurse_preferences,
     remove_nurse,
     list_available_certifications
+)
+from tools.compliance_tools import (
+    validate_roster_compliance,
+    validate_weekly_hours
+)
+from tools.empathy_tools import (
+    analyze_roster_fairness
 )
 from callbacks.format_output import format_model_output
 
@@ -197,10 +229,12 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             get_upcoming_shifts,
             get_staffing_summary,
             get_shift_history,
+            get_regulations,
             # Roster management
             list_pending_rosters,
             list_all_rosters,
             get_roster,
+            get_rosters_by_date_range,
             finalize_roster,
             reject_roster,
             delete_roster,
@@ -211,7 +245,11 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             update_nurse_certifications,
             update_nurse_preferences,
             remove_nurse,
-            list_available_certifications
+            list_available_certifications,
+            # Direct validation tools
+            validate_roster_compliance,
+            validate_weekly_hours,
+            analyze_roster_fairness
         ],
         sub_agents=[workflow],
         after_model_callback=format_model_output

@@ -7,7 +7,7 @@ HOSPITAL NURSING REGULATIONS & LABOR LAWS
    - Minimum rest period between shifts: 8 hours
 
 2. COVERAGE REQUIREMENTS
-   - At least one Senior nurse must be on duty for every shift
+   - At least one Senior nurse must be on duty for every shift (every individual shift needs a Senior)
    - ICU shifts require ICU-certified nurses only
    - Emergency shifts require both ACLS and BLS certifications
 

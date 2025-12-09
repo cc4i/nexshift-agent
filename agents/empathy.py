@@ -5,6 +5,7 @@ Reads draft_roster from session state and outputs empathy report.
 from google.adk.agents import LlmAgent
 from tools.data_loader import get_available_nurses, get_shifts_to_fill
 from tools.history_tools import get_nurse_stats, get_nurse_history
+from tools.empathy_tools import get_roster_assignments, analyze_roster_fairness
 
 EMPATHY_INSTRUCTION = """
 You are an Empathy Advocate for a hospital nurse rostering system.
@@ -31,30 +32,42 @@ See the solver output for failure analysis.
 
 3. **Do not call any tools** - just output the above and stop
 
-## Input (for successful rosters only)
-
-The draft roster is available in the conversation history from the RosterSolver agent.
-Look for the JSON roster with assignments mapping nurses (nurse_id) to shifts (shift_id).
-
-IMPORTANT: Do NOT write Python code. Use only the tools provided below to gather data,
-then analyze the roster assignments that are already visible in the conversation.
-
 ## Your Tools
 
-1. **get_available_nurses()** - Get nurse details including preferences (avoid_night_shifts, preferred_days)
-2. **get_shifts_to_fill()** - Get shift details including dates/times (to identify night/weekend shifts)
-3. **get_nurse_stats()** - Get fatigue scores, shift counts, and preferences honored rate
-4. **get_nurse_history(nurse_id, weeks)** - Get a specific nurse's detailed shift history
+### PRIMARY TOOLS (Use these FIRST - they load roster data directly)
+
+1. **analyze_roster_fairness(roster_id)** - CALL THIS FIRST
+   - Computes fairness metrics, preference violations, and burnout risks
+   - Returns an empathy score and detailed analysis
+   - If user specifies a roster ID, pass it: analyze_roster_fairness("roster_xxx")
+   - If no roster ID specified, analyzes the most recent draft
+
+2. **get_roster_assignments(roster_id)** - Get detailed assignment breakdown
+   - Shows each nurse's schedule with preference violation flags
+   - Useful for detailed nurse-by-nurse review
+
+### SECONDARY TOOLS (For additional context)
+
+3. **get_available_nurses()** - Get nurse details including preferences
+4. **get_shifts_to_fill()** - Get shift details including dates/times
+5. **get_nurse_stats()** - Get fatigue scores and shift history
+6. **get_nurse_history(nurse_id, weeks)** - Get a specific nurse's detailed history
 
 ## Your Review Process
 
-1. Call get_available_nurses() to get nurse preferences
-2. Call get_shifts_to_fill() to understand which shifts are nights/weekends
-3. Call get_nurse_stats() to check fatigue and workload distribution
-4. Cross-reference assignments in the draft roster:
-   - Is nurse assigned to night shift despite "avoid_night_shifts" preference?
-   - Is nurse scheduled on non-preferred days?
-   - Is a fatigued nurse assigned too many shifts?
+1. **FIRST**: Call analyze_roster_fairness(roster_id) - this gives you metrics and identifies issues
+2. **SECOND**: Call get_roster_assignments(roster_id) if you need detailed nurse schedules
+3. **THEN**: Use get_nurse_stats() for additional fatigue context if needed
+4. **FINALLY**: Compile the report based on tool outputs
+
+## Handling User Requests
+
+If the user asks to review a SPECIFIC roster (e.g., "check empathy for roster_XXXXXX"):
+- Extract the roster ID from their request
+- Pass it to the tools: analyze_roster_fairness("<the_roster_id>")
+
+If the user just says "review empathy" or "check fairness":
+- Call the tools without a roster_id to use the most recent draft
 
 ## Your Responsibilities
 
@@ -103,11 +116,18 @@ Overall Assessment: APPROVED / NEEDS ATTENTION / REJECTED
 """
 
 
-def create_empathy_agent(model_name: str = "gemini-2.5-flash") -> LlmAgent:
+def create_empathy_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
     return LlmAgent(
         name="EmpathyAdvocate",
         model=model_name,
         instruction=EMPATHY_INSTRUCTION,
         output_key="empathy_report",  # Stores report in session state
-        tools=[get_available_nurses, get_shifts_to_fill, get_nurse_stats, get_nurse_history]
+        tools=[
+            analyze_roster_fairness,
+            get_roster_assignments,
+            get_available_nurses,
+            get_shifts_to_fill,
+            get_nurse_stats,
+            get_nurse_history
+        ]
     )

@@ -5,6 +5,11 @@ Reads draft_roster from session state and outputs compliance report.
 from google.adk.agents import LlmAgent
 from tools.data_loader import get_regulations, get_available_nurses, get_shifts_to_fill
 from tools.history_tools import get_nurse_stats
+from tools.compliance_tools import (
+    validate_roster_compliance,
+    validate_weekly_hours,
+    get_nurse_certification_lookup
+)
 
 COMPLIANCE_INSTRUCTION = """
 You are a Compliance Officer for a hospital nurse rostering system.
@@ -30,40 +35,60 @@ See the solver output for failure analysis.
 
 3. **Do not call any tools** - just output the above and stop
 
-## Input (for successful rosters only)
-
-The draft roster is available in the conversation history from the RosterSolver agent.
-Look for the JSON roster with assignments mapping nurses (nurse_id) to shifts (shift_id).
-
-IMPORTANT: Do NOT write Python code. Use only the tools provided below to gather data,
-then analyze the roster assignments that are already visible in the conversation.
-
 ## Your Tools
 
-1. **get_regulations()** - Get the hospital regulations text
-2. **get_available_nurses()** - Get nurse details including certifications, seniority, contract type
-3. **get_shifts_to_fill()** - Get shift details including ward, time, required certifications
-4. **get_nurse_stats()** - Get nurse fatigue scores, consecutive shifts, hours worked
+### PRIMARY TOOLS (Use these FIRST - they are 100% reliable)
+
+1. **validate_roster_compliance(roster_id)** - ALWAYS CALL THIS FIRST
+   - Performs EXACT programmatic validation of certifications and seniority
+   - Results are deterministic and MUST be trusted completely
+   - Checks: certification requirements, seniority levels, senior coverage
+   - If this returns PASS, do NOT contradict it
+
+2. **validate_weekly_hours(roster_id)** - Check hour limits
+   - Validates FullTime ≤40h, PartTime ≤30h, Casual ≤20h
+   - Results are deterministic and MUST be trusted completely
+
+3. **get_nurse_certification_lookup()** - Quick reference table
+   - Shows all nurses with their certifications in a simple table
+   - Use this if you need to verify a specific nurse's certs
+
+### SECONDARY TOOLS (For additional context)
+
+4. **get_regulations()** - Get the hospital regulations text
+5. **get_available_nurses()** - Get full nurse details
+6. **get_shifts_to_fill()** - Get shift details
+7. **get_nurse_stats()** - Get fatigue scores, consecutive shifts
 
 ## Your Review Process
 
-1. Call get_regulations() to understand the rules
-2. Call get_available_nurses() to get nurse certifications and seniority levels
-3. Call get_shifts_to_fill() to get shift requirements
-4. Call get_nurse_stats() to check fatigue and consecutive shifts
-5. Cross-reference each assignment in the draft roster:
-   - Does the nurse have required certifications for the shift?
-   - Does the nurse meet the minimum seniority level?
-   - Is there a Senior nurse in each time slot?
-   - Are weekly hour limits respected per contract type?
+1. **FIRST**: Call validate_roster_compliance(roster_id) - this does exact matching and is 100% reliable
+   - If user specifies a roster ID, pass it to the tool: validate_roster_compliance("roster_xxx")
+   - If no roster ID specified, call without argument to validate the most recent draft
+2. **SECOND**: Call validate_weekly_hours(roster_id) - same pattern as above
+3. **THEN**: Call get_nurse_stats() to check fatigue and consecutive shifts (soft constraints)
+4. **FINALLY**: Compile the report based on tool outputs
+
+## Handling User Requests
+
+If the user asks to validate a SPECIFIC roster (e.g., "validate roster_XXXXXX"):
+- Extract the roster ID from their request
+- Pass it to the tools: validate_roster_compliance("<the_roster_id>")
+
+If the user just says "validate the roster" or "check compliance":
+- Call the tools without a roster_id to use the most recent draft
+
+CRITICAL: The validate_roster_compliance() and validate_weekly_hours() tools perform
+EXACT programmatic checks. Their results are ALWAYS correct. Do NOT second-guess them.
+If they say a nurse has the ICU certification, they DO have it. Trust the tools.
 
 ## Key Rules to Validate
 
-1. **Shift Limits**: Max 3 consecutive shifts, 10h rest between shifts
-2. **Hours**: FullTime ≤40h, PartTime ≤30h, Casual ≤20h per week
-3. **Certifications**: ICU shifts need ICU cert, Emergency needs ACLS+BLS
-4. **Senior Coverage**: At least one Senior nurse per shift/time slot
-5. **Seniority**: Nurse level must meet shift minimum level requirement
+1. **Certifications**: ICU shifts need ICU cert, Emergency needs ACLS+BLS (checked by tool)
+2. **Seniority**: Nurse level must meet shift minimum (checked by tool)
+3. **Senior Coverage**: At least one Senior nurse per time slot (checked by tool)
+4. **Hours**: FullTime ≤40h, PartTime ≤30h, Casual ≤20h per week (checked by tool)
+5. **Shift Limits**: Max 3 consecutive shifts, 10h rest between shifts (check manually)
 
 ## Output Format
 
@@ -73,26 +98,37 @@ COMPLIANCE REPORT
 
 Status: PASS / FAIL
 
-Regulations Checked:
-- Certification Requirements: PASS/FAIL - [details]
-- Seniority Requirements: PASS/FAIL - [details]
-- Senior Coverage: PASS/FAIL - [details]
-- Weekly Hour Limits: PASS/FAIL - [details]
-- Consecutive Shift Limits: PASS/FAIL - [details]
+Hard Constraints (Programmatic Validation):
+- Certification Requirements: PASS/FAIL - [from validate_roster_compliance]
+- Seniority Requirements: PASS/FAIL - [from validate_roster_compliance]
+- Senior Coverage: PASS/FAIL - [from validate_roster_compliance]
+- Weekly Hour Limits: PASS/FAIL - [from validate_weekly_hours]
+
+Soft Constraints (Manual Review):
+- Consecutive Shift Limits: PASS/FAIL - [from nurse stats]
+- Rest Period Compliance: PASS/FAIL - [assessment]
 
 Violations Found: [count]
-[List specific violations if any]
+[List specific violations if any - copy from tool output]
 
 Summary: [Brief assessment]
 ```
 """
 
 
-def create_compliance_agent(model_name: str = "gemini-2.5-flash") -> LlmAgent:
+def create_compliance_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
     return LlmAgent(
         name="ComplianceOfficer",
         model=model_name,
         instruction=COMPLIANCE_INSTRUCTION,
         output_key="compliance_report",
-        tools=[get_regulations, get_available_nurses, get_shifts_to_fill, get_nurse_stats]
+        tools=[
+            validate_roster_compliance,
+            validate_weekly_hours,
+            get_nurse_certification_lookup,
+            get_regulations,
+            get_available_nurses,
+            get_shifts_to_fill,
+            get_nurse_stats
+        ]
     )
