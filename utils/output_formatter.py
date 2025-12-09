@@ -55,7 +55,9 @@ class OutputFormatter:
         return bool(re.search(r'NURSE PROFILE:', text, re.I))
 
     def _is_staffing_summary(self, text: str) -> bool:
-        return bool(re.search(r'STAFFING SUMMARY', text, re.I))
+        # Disabled - the raw output is already well-formatted and regex parsing
+        # causes issues when LLM reformats the content before callback
+        return False
 
     def _is_shifts_list(self, text: str) -> bool:
         return bool(re.search(r'SHIFTS TO BE FILLED', text, re.I))

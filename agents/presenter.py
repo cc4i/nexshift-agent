@@ -3,7 +3,14 @@ Roster Presenter Agent - Final step that synthesizes all reports and presents to
 Reads from session state and handles user approval/rejection.
 """
 from google.adk.agents import LlmAgent
-from tools.history_tools import save_draft_roster, finalize_roster, reject_roster, list_pending_rosters
+from tools.history_tools import (
+    save_draft_roster,
+    finalize_roster,
+    reject_roster,
+    list_pending_rosters,
+    list_all_rosters,
+    delete_roster
+)
 
 PRESENTER_INSTRUCTION = """
 You are a Roster Presenter for a nurse rostering system.
@@ -117,6 +124,8 @@ def create_presenter_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             save_draft_roster,
             finalize_roster,
             reject_roster,
-            list_pending_rosters
+            list_pending_rosters,
+            list_all_rosters,
+            delete_roster
         ]
     )

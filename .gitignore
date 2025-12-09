@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .venv
 data/rosters
+deployment_info.json
+requirements.txt

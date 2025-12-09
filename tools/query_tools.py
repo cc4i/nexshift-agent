@@ -3,10 +3,14 @@ Query tools for user-facing information retrieval.
 Allows users to query nurse status, availability, shifts, and staffing info.
 """
 import json
+import logging
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from tools.data_loader import load_nurses, generate_shifts
 from tools.history_tools import _load_json, NURSE_STATS_FILE
+
+logger = logging.getLogger(__name__)
 
 
 def get_nurse_info(nurse_id: str) -> str:
@@ -316,9 +320,22 @@ def get_staffing_summary() -> str:
     Returns:
         Summary of current staffing status, fatigue levels, and potential issues.
     """
-    nurses = load_nurses()
-    stats = _load_json(NURSE_STATS_FILE)
-    shifts = generate_shifts(num_days=7)
+    try:
+        logger.info(f"get_staffing_summary called. CWD: {os.getcwd()}")
+        logger.info(f"NURSE_STATS_FILE: {NURSE_STATS_FILE}, exists: {os.path.exists(NURSE_STATS_FILE)}")
+
+        nurses = load_nurses()
+        logger.info(f"Loaded {len(nurses)} nurses")
+
+        stats = _load_json(NURSE_STATS_FILE)
+        logger.info(f"Loaded stats with {len(stats)} entries")
+
+        shifts = generate_shifts(num_days=7)
+        logger.info(f"Generated {len(shifts)} shifts")
+
+    except Exception as e:
+        logger.error(f"Error loading data in get_staffing_summary: {e}", exc_info=True)
+        return f"Error loading staffing data: {str(e)}"
 
     result = "STAFFING SUMMARY\n" + "=" * 50 + "\n\n"
 

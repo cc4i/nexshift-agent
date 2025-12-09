@@ -910,13 +910,31 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
             # Upper bound is already handled by MAX_HOURS (Constraint 4)
 
     # Hard Constraint 5: Minimum rest period between shifts (8 hours)
-    # For each nurse, if two shifts are too close, they can't both be assigned
+    # OPTIMIZED: Only check shift pairs that could potentially conflict
+    # Two shifts can only conflict if they're within 24 hours of each other
+    # This reduces O(N × S²) to O(N × K) where K is the number of conflicting pairs
+
+    # Pre-compute conflicting shift pairs (done once, not per nurse)
+    # Sort shifts by start time for efficient neighbor lookup
+    sorted_shifts = sorted(shifts_objs, key=lambda s: s.start_time)
+    conflicting_pairs = []
+
+    for i, s1 in enumerate(sorted_shifts):
+        # Only check subsequent shifts within 24 hours
+        for j in range(i + 1, len(sorted_shifts)):
+            s2 = sorted_shifts[j]
+            # If s2 starts more than 24 hours after s1 ends, no more conflicts possible
+            if s2.start_time > s1.end_time + timedelta(hours=24):
+                break
+            if _shifts_overlap_or_too_close(s1, s2, MIN_REST_HOURS):
+                conflicting_pairs.append((s1.id, s2.id))
+
+    logger.debug(f"Found {len(conflicting_pairs)} conflicting shift pairs (out of {len(shifts_objs) * (len(shifts_objs)-1) // 2} total pairs)")
+
+    # Apply conflict constraints for each nurse - now O(N × K) instead of O(N × S²)
     for n in nurses_objs:
-        for i, s1 in enumerate(shifts_objs):
-            for s2 in shifts_objs[i+1:]:
-                if _shifts_overlap_or_too_close(s1, s2, MIN_REST_HOURS):
-                    # Can't have both shifts
-                    model.AddAtMostOne([assignments[(n.id, s1.id)], assignments[(n.id, s2.id)]])
+        for s1_id, s2_id in conflicting_pairs:
+            model.AddAtMostOne([assignments[(n.id, s1_id)], assignments[(n.id, s2_id)]])
 
     # Hard Constraint 6: Maximum consecutive shifts (3)
     # Group shifts by date to check consecutive working days/shifts

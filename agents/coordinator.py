@@ -151,7 +151,15 @@ For roster generation requests, delegate to the RosteringWorkflow sub-agent whic
 - Use the appropriate query tool based on user intent
 """
 
-from tools.history_tools import list_pending_rosters, finalize_roster, reject_roster, delete_pending_roster, get_roster
+from tools.history_tools import (
+    list_pending_rosters,
+    list_all_rosters,
+    finalize_roster,
+    reject_roster,
+    delete_roster,
+    delete_pending_roster,
+    get_roster
+)
 from tools.hris_tools import (
     add_nurse,
     promote_nurse,
@@ -191,9 +199,11 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             get_shift_history,
             # Roster management
             list_pending_rosters,
+            list_all_rosters,
             get_roster,
             finalize_roster,
             reject_roster,
+            delete_roster,
             delete_pending_roster,
             # HRIS management - hiring, promotions, certifications
             add_nurse,

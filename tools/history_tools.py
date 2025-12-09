@@ -931,19 +931,35 @@ def list_pending_rosters() -> str:
     """
     Lists all draft rosters awaiting approval.
 
+    Scans actual roster files in the rosters directory for accuracy.
+
     Returns:
         Formatted string with pending rosters.
     """
-    history = _load_json(SHIFT_HISTORY_FILE)
-    drafts = [l for l in history.get("logs", []) if l.get("status") == "draft"]
+    drafts = []
+
+    # Scan actual roster files for accuracy
+    if os.path.exists(ROSTERS_DIR):
+        for filename in os.listdir(ROSTERS_DIR):
+            if filename.endswith('.json') and not filename.startswith('.'):
+                roster_path = os.path.join(ROSTERS_DIR, filename)
+                roster = _load_json(roster_path)
+                if roster.get("status") == "draft":
+                    # Handle both 'id' and 'roster_id' keys
+                    roster_id = roster.get("roster_id") or roster.get("id") or filename.replace('.json', '')
+                    drafts.append({
+                        "roster_id": roster_id,
+                        "roster": roster
+                    })
 
     if not drafts:
         return "No pending rosters. All rosters have been processed."
 
     result = "PENDING ROSTERS (Awaiting Approval)\n" + "=" * 50 + "\n\n"
 
-    for roster in drafts:
-        roster_id = roster.get("roster_id", "unknown")
+    for item in sorted(drafts, key=lambda x: x["roster"].get("generated_at", ""), reverse=True):
+        roster_id = item["roster_id"]
+        roster = item["roster"]
         period = roster.get("period", {})
         metadata = roster.get("metadata", {})
 
@@ -955,17 +971,17 @@ def list_pending_rosters() -> str:
         result += "\n"
 
     result += f"Total pending: {len(drafts)}\n"
-    result += "\nUse finalize_roster('<roster_id>') to approve, reject_roster('<roster_id>') to reject, or delete_pending_roster('<roster_id>') to remove."
+    result += "\nUse finalize_roster('<roster_id>') to approve, reject_roster('<roster_id>') to reject, or delete_roster('<roster_id>') to remove."
 
     return result
 
 
-def delete_pending_roster(roster_id: str) -> str:
+def delete_roster(roster_id: str) -> str:
     """
-    Deletes a pending (draft) roster permanently.
+    Deletes a roster (draft or rejected) permanently.
 
     Args:
-        roster_id: The ID of the draft roster to delete
+        roster_id: The ID of the roster to delete
 
     Returns:
         Confirmation message.
@@ -978,15 +994,13 @@ def delete_pending_roster(roster_id: str) -> str:
     else:
         return f"Error: Roster '{roster_id}' not found."
 
-    # Only allow deletion of draft rosters
-    if roster.get("status") == "finalized":
+    # Only allow deletion of draft or rejected rosters
+    status = roster.get("status", "unknown")
+    if status == "finalized":
         return f"Cannot delete finalized roster '{roster_id}'. Finalized rosters are preserved for audit."
 
-    if roster.get("status") == "rejected":
-        # Allow deletion of rejected rosters
-        pass
-    elif roster.get("status") != "draft":
-        return f"Cannot delete roster '{roster_id}' with status '{roster.get('status')}'."
+    if status not in ["draft", "rejected"]:
+        return f"Cannot delete roster '{roster_id}' with status '{status}'."
 
     # Delete the roster file
     try:
@@ -994,14 +1008,122 @@ def delete_pending_roster(roster_id: str) -> str:
     except OSError as e:
         return f"Error deleting roster file: {e}"
 
-    # Remove from history log
+    # Remove from history log - handle both 'id' and 'roster_id' keys
     history = _load_json(SHIFT_HISTORY_FILE)
     original_count = len(history.get("logs", []))
-    history["logs"] = [l for l in history.get("logs", []) if l.get("roster_id") != roster_id]
+    history["logs"] = [
+        l for l in history.get("logs", [])
+        if l.get("roster_id") != roster_id and l.get("id") != roster_id
+    ]
     removed_count = original_count - len(history["logs"])
     _save_json(SHIFT_HISTORY_FILE, history)
 
-    return f"Deleted roster '{roster_id}'.\n   Removed {removed_count} history entry(ies)."
+    return f"Deleted roster '{roster_id}' (status: {status}).\n   Removed {removed_count} history entry(ies)."
+
+
+# Alias for backwards compatibility
+def delete_pending_roster(roster_id: str) -> str:
+    """Alias for delete_roster. Deletes a draft or rejected roster."""
+    return delete_roster(roster_id)
+
+
+def list_all_rosters() -> str:
+    """
+    Lists ALL rosters in the rosters directory with their status.
+
+    Scans actual roster files to show complete inventory including
+    draft, finalized, and rejected rosters.
+
+    Returns:
+        Formatted string with all rosters grouped by status.
+    """
+    rosters_by_status = {
+        "draft": [],
+        "finalized": [],
+        "rejected": [],
+        "unknown": []
+    }
+
+    if not os.path.exists(ROSTERS_DIR):
+        return "No rosters directory found."
+
+    for filename in os.listdir(ROSTERS_DIR):
+        if filename.endswith('.json') and not filename.startswith('.'):
+            roster_path = os.path.join(ROSTERS_DIR, filename)
+            roster = _load_json(roster_path)
+
+            # Handle both 'id' and 'roster_id' keys
+            roster_id = roster.get("roster_id") or roster.get("id") or filename.replace('.json', '')
+            status = roster.get("status", "unknown")
+            period = roster.get("period", {})
+            metadata = roster.get("metadata", {})
+
+            roster_info = {
+                "roster_id": roster_id,
+                "period_start": period.get("start", "?"),
+                "period_end": period.get("end", "?"),
+                "generated_at": roster.get("generated_at", "N/A"),
+                "assignments": len(roster.get("assignments", [])),
+                "empathy_score": metadata.get("empathy_score", "N/A")
+            }
+
+            if status in rosters_by_status:
+                rosters_by_status[status].append(roster_info)
+            else:
+                rosters_by_status["unknown"].append(roster_info)
+
+    total = sum(len(v) for v in rosters_by_status.values())
+
+    if total == 0:
+        return "No rosters found in the rosters directory."
+
+    result = "ALL ROSTERS\n" + "=" * 60 + "\n\n"
+
+    # Draft rosters first
+    if rosters_by_status["draft"]:
+        result += f"📝 DRAFT ({len(rosters_by_status['draft'])} pending approval)\n"
+        result += "-" * 50 + "\n"
+        for r in sorted(rosters_by_status["draft"], key=lambda x: x["generated_at"], reverse=True):
+            result += f"   {r['roster_id']}\n"
+            result += f"      Period: {r['period_start']} to {r['period_end']}\n"
+            result += f"      Assignments: {r['assignments']} | Generated: {r['generated_at'][:10] if len(str(r['generated_at'])) >= 10 else r['generated_at']}\n"
+        result += "\n"
+
+    # Finalized rosters
+    if rosters_by_status["finalized"]:
+        result += f"✅ FINALIZED ({len(rosters_by_status['finalized'])})\n"
+        result += "-" * 50 + "\n"
+        for r in sorted(rosters_by_status["finalized"], key=lambda x: x["generated_at"], reverse=True):
+            result += f"   {r['roster_id']}\n"
+            result += f"      Period: {r['period_start']} to {r['period_end']}\n"
+        result += "\n"
+
+    # Rejected rosters
+    if rosters_by_status["rejected"]:
+        result += f"❌ REJECTED ({len(rosters_by_status['rejected'])})\n"
+        result += "-" * 50 + "\n"
+        for r in sorted(rosters_by_status["rejected"], key=lambda x: x["generated_at"], reverse=True):
+            result += f"   {r['roster_id']}\n"
+            result += f"      Period: {r['period_start']} to {r['period_end']}\n"
+        result += "\n"
+
+    # Unknown status
+    if rosters_by_status["unknown"]:
+        result += f"❓ UNKNOWN STATUS ({len(rosters_by_status['unknown'])})\n"
+        result += "-" * 50 + "\n"
+        for r in rosters_by_status["unknown"]:
+            result += f"   {r['roster_id']}\n"
+        result += "\n"
+
+    result += "=" * 60 + "\n"
+    result += f"Total: {total} roster(s)\n"
+    result += "\nActions:\n"
+    result += "  - finalize_roster('<id>') to approve a draft\n"
+    result += "  - reject_roster('<id>') to reject a draft\n"
+    result += "  - delete_roster('<id>') to remove draft/rejected\n"
+    result += "  - get_roster('<id>') to view details\n"
+
+    return result
 
 
 # =============================================================================
