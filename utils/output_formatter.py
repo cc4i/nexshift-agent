@@ -142,8 +142,8 @@ class OutputFormatter:
 
     def _format_roster(self, text: str) -> str:
         """Format roster as 7-day calendar view."""
-        # Extract roster ID
-        roster_match = re.search(r'(roster_\d+)', text, re.I)
+        # Extract roster ID - handles formats like roster_202512052008 or roster_20251209165648_2930
+        roster_match = re.search(r'(roster_[\w]+)', text, re.I)
         roster_id = roster_match.group(1) if roster_match else "Unknown"
 
         # Extract status
