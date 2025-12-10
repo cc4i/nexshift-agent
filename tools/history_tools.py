@@ -1009,9 +1009,112 @@ def save_draft_roster(roster_json: str) -> str:
     return f"✅ Draft roster saved: {roster_id}\n   Assignments: {assignment_count}\n   Status: DRAFT (awaiting approval)\n   Use finalize_roster('{roster_id}') to approve."
 
 
+def _get_assignment_dates(roster: dict, rosters_dir: str) -> set:
+    """
+    Get all dates covered by assignments in a roster.
+    Uses shift_id to look up dates from generated shifts.
+    """
+    from tools.data_loader import generate_shifts
+
+    period = roster.get("period", {})
+    if not period.get("start"):
+        return set()
+
+    try:
+        start_dt = datetime.strptime(period["start"], "%Y-%m-%d")
+        end_dt = datetime.strptime(period.get("end", period["start"]), "%Y-%m-%d")
+        num_days = (end_dt - start_dt).days + 1
+    except ValueError:
+        return set()
+
+    shifts = generate_shifts(start_date=start_dt, num_days=num_days)
+    shifts_map = {s["id"]: s["date"] for s in shifts}
+
+    dates = set()
+    for a in roster.get("assignments", []):
+        shift_id = a.get("shift_id")
+        if shift_id and shift_id in shifts_map:
+            dates.add(shifts_map[shift_id])
+
+    return dates
+
+
+def _remove_assignments_for_dates(roster: dict, dates_to_remove: set) -> list:
+    """
+    Remove assignments for specific dates from a roster.
+    Returns the removed assignments.
+    """
+    from tools.data_loader import generate_shifts
+
+    period = roster.get("period", {})
+    if not period.get("start"):
+        return []
+
+    try:
+        start_dt = datetime.strptime(period["start"], "%Y-%m-%d")
+        end_dt = datetime.strptime(period.get("end", period["start"]), "%Y-%m-%d")
+        num_days = (end_dt - start_dt).days + 1
+    except ValueError:
+        return []
+
+    shifts = generate_shifts(start_date=start_dt, num_days=num_days)
+    shifts_map = {s["id"]: s for s in shifts}
+
+    removed = []
+    kept = []
+
+    for a in roster.get("assignments", []):
+        shift_id = a.get("shift_id")
+        shift_info = shifts_map.get(shift_id, {})
+        shift_date = shift_info.get("date", "")
+
+        if shift_date in dates_to_remove:
+            # Add shift info to removed assignment for stats reversal
+            a["date"] = shift_date
+            a["shift_type"] = "night" if shift_info.get("start", "").startswith(("20", "21", "22", "23", "00", "01", "02", "03", "04", "05")) else "day"
+            removed.append(a)
+        else:
+            kept.append(a)
+
+    roster["assignments"] = kept
+    return removed
+
+
+def _reverse_nurse_stats(assignments: list, stats: dict) -> None:
+    """
+    Reverse nurse stats for removed assignments.
+    Subtracts shift counts that were previously added.
+    """
+    for a in assignments:
+        nurse_id = a.get("nurse_id")
+        if not nurse_id or nurse_id not in stats:
+            continue
+
+        nurse_stats = stats[nurse_id]
+        date = a.get("date", "")
+        shift_type = a.get("shift_type", "")
+
+        # Subtract counts (don't go below 0)
+        nurse_stats["total_shifts_30d"] = max(0, nurse_stats.get("total_shifts_30d", 0) - 1)
+
+        if _is_weekend(date):
+            nurse_stats["weekend_shifts_30d"] = max(0, nurse_stats.get("weekend_shifts_30d", 0) - 1)
+
+        if shift_type == "night":
+            nurse_stats["night_shifts_30d"] = max(0, nurse_stats.get("night_shifts_30d", 0) - 1)
+
+        # Recalculate fatigue
+        nurse_stats["fatigue_score"] = _calculate_fatigue_score(nurse_stats)
+        nurse_stats["updated_at"] = datetime.now().isoformat()
+
+
 def finalize_roster(roster_id: str) -> str:
     """
     Finalizes a draft roster, updating nurse statistics.
+
+    Handles overlapping rosters:
+    - If overlap includes past/today dates: Block finalization
+    - If overlap is only future dates: Overwrite those dates in existing roster
 
     Args:
         roster_id: The ID of the draft roster to finalize
@@ -1032,6 +1135,128 @@ def finalize_roster(roster_id: str) -> str:
 
     if roster.get("status") == "rejected":
         return f"Cannot finalize rejected roster '{roster_id}'."
+
+    # Get the new roster's period
+    new_period = roster.get("period", {})
+    overwrite_messages = []
+
+    if new_period.get("start") and new_period.get("end"):
+        try:
+            new_start = datetime.strptime(new_period["start"], "%Y-%m-%d")
+            new_end = datetime.strptime(new_period["end"], "%Y-%m-%d")
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Check all finalized rosters for overlap
+            finalized_periods = get_scheduled_periods()
+            stats = _load_json(NURSE_STATS_FILE)
+
+            for p in finalized_periods:
+                if p["status"] != "finalized":
+                    continue
+                if p["roster_id"] == roster_id:
+                    continue
+
+                try:
+                    p_start = datetime.strptime(p["start"], "%Y-%m-%d")
+                    p_end = datetime.strptime(p["end"], "%Y-%m-%d")
+                except ValueError:
+                    continue
+
+                # Check if there's overlap
+                if new_end < p_start or new_start > p_end:
+                    continue  # No overlap
+
+                # Calculate overlapping dates
+                overlap_start = max(new_start, p_start)
+                overlap_end = min(new_end, p_end)
+
+                # Check if overlap includes past/today dates
+                past_overlap_dates = []
+                future_overlap_dates = []
+
+                current = overlap_start
+                while current <= overlap_end:
+                    date_str = current.strftime("%Y-%m-%d")
+                    if current <= today:
+                        past_overlap_dates.append(date_str)
+                    else:
+                        future_overlap_dates.append(date_str)
+                    current += timedelta(days=1)
+
+                # Block if overlap includes past/today
+                if past_overlap_dates:
+                    past_dates_str = ", ".join(past_overlap_dates[:5])
+                    if len(past_overlap_dates) > 5:
+                        past_dates_str += f" ... ({len(past_overlap_dates)} dates total)"
+                    return (
+                        f"❌ Cannot finalize roster '{roster_id}'.\n\n"
+                        f"Period {new_period['start']} to {new_period['end']} overlaps with "
+                        f"PAST/CURRENT shifts in finalized roster '{p['roster_id']}':\n"
+                        f"   Overlapping dates: {past_dates_str}\n\n"
+                        f"These shifts have already occurred and cannot be overwritten."
+                    )
+
+                # Overwrite future dates
+                if future_overlap_dates:
+                    # Load the existing roster
+                    existing_file = os.path.join(ROSTERS_DIR, f"{p['roster_id']}.json")
+                    if not os.path.exists(existing_file):
+                        continue
+
+                    existing_roster = _load_json(existing_file)
+
+                    # Remove assignments for future overlap dates
+                    removed = _remove_assignments_for_dates(existing_roster, set(future_overlap_dates))
+
+                    if removed:
+                        # Reverse nurse stats for removed assignments
+                        _reverse_nurse_stats(removed, stats)
+
+                        # Update the existing roster's period
+                        remaining_dates = _get_assignment_dates(existing_roster, ROSTERS_DIR)
+
+                        if not remaining_dates:
+                            # No assignments left - delete the roster
+                            os.remove(existing_file)
+                            # Remove from history
+                            history = _load_json(SHIFT_HISTORY_FILE)
+                            history["logs"] = [
+                                l for l in history.get("logs", [])
+                                if l.get("roster_id") != p["roster_id"] and l.get("id") != p["roster_id"]
+                            ]
+                            _save_json(SHIFT_HISTORY_FILE, history)
+                            overwrite_messages.append(
+                                f"   - Deleted '{p['roster_id']}' (all shifts overwritten)"
+                            )
+                        else:
+                            # Update period to remaining dates
+                            existing_roster["period"] = {
+                                "start": min(remaining_dates),
+                                "end": max(remaining_dates)
+                            }
+                            existing_roster["trimmed_at"] = datetime.now().isoformat()
+                            existing_roster["trimmed_reason"] = f"Future shifts overwritten by {roster_id}"
+                            _save_json(existing_file, existing_roster)
+
+                            # Update history
+                            history = _load_json(SHIFT_HISTORY_FILE)
+                            for log in history.get("logs", []):
+                                if log.get("roster_id") == p["roster_id"] or log.get("id") == p["roster_id"]:
+                                    log["period"] = existing_roster["period"]
+                                    break
+                            _save_json(SHIFT_HISTORY_FILE, history)
+
+                            overwrite_messages.append(
+                                f"   - Trimmed '{p['roster_id']}' to {existing_roster['period']['start']} - {existing_roster['period']['end']} "
+                                f"({len(removed)} shifts removed)"
+                            )
+
+            # Save updated stats if any overwrites occurred
+            if overwrite_messages:
+                _save_json(NURSE_STATS_FILE, stats)
+
+        except ValueError:
+            pass  # If dates can't be parsed, skip overlap check
 
     # Update roster status
     roster["status"] = "finalized"
@@ -1093,6 +1318,14 @@ def finalize_roster(roster_id: str) -> str:
     _save_json(SHIFT_HISTORY_FILE, history)
 
     result = f"✅ Roster '{roster_id}' has been FINALIZED.\n\n"
+
+    # Show overwrite info if any
+    if overwrite_messages:
+        result += "⚠️  Overlapping rosters updated:\n"
+        for msg in overwrite_messages:
+            result += f"{msg}\n"
+        result += "\n"
+
     result += f"Updated stats for {len(updated_nurses)} nurses:\n"
     for name in updated_nurses:
         result += f"   - {name}\n"

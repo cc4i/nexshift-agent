@@ -1,0 +1,111 @@
+{
+  "description": "End-to-end workflow tests for the complete rostering pipeline",
+  "test_cases": [
+    {
+      "name": "complete_roster_generation_workflow",
+      "description": "Complete workflow: context gathering -> generation -> validation -> presentation",
+      "input": "generate a roster for next week",
+      "expected_workflow_steps": [
+        "ContextGatherer",
+        "RosterSolver",
+        "ComplianceOfficer",
+        "EmpathyAdvocate",
+        "RosterPresenter"
+      ],
+      "expected_response_contains": ["ROSTER SUMMARY", "COMPLIANCE", "EMPATHY", "approve", "reject"]
+    },
+    {
+      "name": "workflow_with_approval",
+      "description": "Complete workflow followed by user approval",
+      "conversation": [
+        {"role": "user", "content": "generate a roster for January 6-12"},
+        {"role": "assistant", "assert_contains": ["ROSTER SUMMARY", "approve"]},
+        {"role": "user", "content": "approve"},
+        {"role": "assistant", "assert_contains": ["finalized", "approved"]}
+      ]
+    },
+    {
+      "name": "workflow_with_rejection",
+      "description": "Complete workflow followed by user rejection",
+      "conversation": [
+        {"role": "user", "content": "generate a roster"},
+        {"role": "assistant", "assert_contains": ["ROSTER SUMMARY"]},
+        {"role": "user", "content": "reject - too many night shifts for Alice"},
+        {"role": "assistant", "assert_contains": ["rejected", "Alice"]}
+      ]
+    },
+    {
+      "name": "workflow_failure_recovery",
+      "description": "Workflow handles generation failure gracefully",
+      "input": "generate a roster for a ward with no qualified nurses",
+      "expected_response_contains": ["FAILED", "RECOMMENDATIONS"],
+      "expected_response_not_contains": ["approve", "finalize"]
+    },
+    {
+      "name": "query_then_generate",
+      "description": "User queries staff before generating roster",
+      "conversation": [
+        {"role": "user", "content": "who are the senior nurses?"},
+        {"role": "assistant", "assert_contains": ["Senior"]},
+        {"role": "user", "content": "what shifts need to be filled?"},
+        {"role": "assistant", "assert_contains": ["shift"]},
+        {"role": "user", "content": "ok generate a roster"},
+        {"role": "assistant", "assert_contains": ["ROSTER SUMMARY"]}
+      ]
+    },
+    {
+      "name": "validate_existing_roster",
+      "description": "User validates an existing roster without generating new one",
+      "conversation": [
+        {"role": "user", "content": "list all rosters"},
+        {"role": "assistant", "assert_contains": ["roster"]},
+        {"role": "user", "content": "check compliance for roster_test_001"},
+        {"role": "assistant", "assert_contains": ["COMPLIANCE", "PASS"]}
+      ]
+    },
+    {
+      "name": "hris_then_generate",
+      "description": "User adds nurse then generates roster",
+      "conversation": [
+        {"role": "user", "content": "add a new ICU nurse named John, senior level, full-time"},
+        {"role": "assistant", "assert_contains": ["John", "added"]},
+        {"role": "user", "content": "now generate a roster"},
+        {"role": "assistant", "assert_contains": ["ROSTER SUMMARY"]}
+      ]
+    },
+    {
+      "name": "multi_turn_roster_refinement",
+      "description": "User generates, rejects, adjusts, regenerates",
+      "conversation": [
+        {"role": "user", "content": "generate a roster"},
+        {"role": "assistant", "assert_contains": ["ROSTER SUMMARY"]},
+        {"role": "user", "content": "reject - Alice has too many shifts"},
+        {"role": "assistant", "assert_contains": ["rejected"]},
+        {"role": "user", "content": "update Alice's preferences to avoid night shifts"},
+        {"role": "assistant", "assert_contains": ["updated", "Alice"]},
+        {"role": "user", "content": "generate a new roster"},
+        {"role": "assistant", "assert_contains": ["ROSTER SUMMARY"]}
+      ]
+    },
+    {
+      "name": "date_range_query_workflow",
+      "description": "User queries schedule by date range",
+      "conversation": [
+        {"role": "user", "content": "show me the schedule from 2025-01-06 to 2025-01-19"},
+        {"role": "assistant", "assert_contains": ["2025-01"]}
+      ]
+    },
+    {
+      "name": "concurrent_validation_workflow",
+      "description": "Workflow runs compliance and empathy in parallel",
+      "input": "generate a roster and validate it thoroughly",
+      "expected_workflow_steps": [
+        "ContextGatherer",
+        "RosterSolver",
+        "ValidationPipeline",
+        "RosterPresenter"
+      ],
+      "expected_response_contains": ["COMPLIANCE", "EMPATHY"]
+    }
+  ]
+}

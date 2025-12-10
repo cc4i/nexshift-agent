@@ -189,5 +189,16 @@
     "preferences_honored_rate": 1.0,
     "fatigue_score": 0.0,
     "updated_at": "2025-12-09T18:50:54.632583"
+  },
+  "nurse_021": {
+    "nurse_name": "John",
+    "total_shifts_30d": 0,
+    "weekend_shifts_30d": 0,
+    "night_shifts_30d": 0,
+    "consecutive_shifts_current": 0,
+    "last_shift_date": "",
+    "preferences_honored_rate": 1.0,
+    "fatigue_score": 0.0,
+    "updated_at": "2025-12-10T18:13:12.871506"
   }
 }

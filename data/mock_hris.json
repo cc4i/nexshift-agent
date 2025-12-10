@@ -6,7 +6,7 @@
       "BLS",
       "ACLS"
     ],
-    "seniority_level": "Junior",
+    "seniority_level": "Senior",
     "contract_type": "FullTime",
     "preferences": {
       "avoid_night_shifts": false,
@@ -417,6 +417,26 @@
     ],
     "seniority_level": "Senior",
     "contract_type": "Casual",
+    "preferences": {
+      "avoid_night_shifts": false,
+      "preferred_days": [],
+      "adhoc_requests": []
+    },
+    "history_summary": {
+      "last_shift": null,
+      "consecutive_shifts": 0,
+      "weekend_shifts_last_month": 0
+    }
+  },
+  {
+    "id": "nurse_021",
+    "name": "John",
+    "certifications": [
+      "ICU",
+      "BLS"
+    ],
+    "seniority_level": "Mid",
+    "contract_type": "FullTime",
     "preferences": {
       "avoid_night_shifts": false,
       "preferred_days": [],
