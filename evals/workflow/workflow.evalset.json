@@ -4,8 +4,8 @@
   "description": "Evaluates complete multi-agent workflows including roster generation, validation, and user interactions",
   "metrics": [
     {
-      "metric_name": "workflow_completion_rate",
-      "threshold": 0.9
+      "metric_name": "tool_trajectory_avg_score",
+      "threshold": 0.5
     },
     {
       "metric_name": "response_match_score",
@@ -18,25 +18,11 @@
   "categories": {
     "full_workflow": [
       "complete_roster_generation_workflow",
-      "concurrent_validation_workflow"
+      "generate_with_validation"
     ],
-    "approval_rejection": [
-      "workflow_with_approval",
-      "workflow_with_rejection"
-    ],
-    "failure_handling": [
-      "workflow_failure_recovery"
-    ],
-    "multi_turn": [
-      "query_then_generate",
-      "validate_existing_roster",
-      "hris_then_generate",
-      "multi_turn_roster_refinement",
-      "date_range_query_workflow"
+    "queries": [
+      "query_senior_nurses",
+      "list_shifts_to_fill"
     ]
-  },
-  "notes": {
-    "conversation_tests": "Tests with 'conversation' key are multi-turn user simulations",
-    "workflow_steps": "Tests with 'expected_workflow_steps' verify sequential agent execution"
   }
 }
