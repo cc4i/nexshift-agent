@@ -15,7 +15,9 @@
         "Thursday",
         "Friday"
       ],
-      "adhoc_requests": []
+      "adhoc_requests": [
+        "Off_2025-12-12_Reason_Urgent"
+      ]
     },
     "history_summary": {
       "last_shift": "2023-10-28T08:00:00",
@@ -435,7 +437,7 @@
       "ICU",
       "BLS"
     ],
-    "seniority_level": "Mid",
+    "seniority_level": "Junior",
     "contract_type": "FullTime",
     "preferences": {
       "avoid_night_shifts": false,

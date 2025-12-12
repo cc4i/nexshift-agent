@@ -7,7 +7,7 @@ promote existing nurses, and update certifications.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "../data")
@@ -455,5 +455,312 @@ def list_available_certifications() -> str:
     result += "ICU Ward:       ICU certification required\n"
     result += "Emergency Ward: ACLS + BLS certifications required\n"
     result += "General Ward:   BLS certification required\n"
+
+    return result
+
+
+def add_time_off_request(
+    nurse_id: str,
+    start_date: str,
+    end_date: str = "",
+    reason: str = "TimeOff"
+) -> str:
+    """
+    Adds a time-off request for a nurse (sick leave, vacation, unavailable period).
+
+    The nurse will NOT be assigned any shifts during this period when generating rosters.
+
+    Args:
+        nurse_id: The nurse's ID (e.g., "nurse_002") or name
+        start_date: Start date of unavailability in YYYY-MM-DD format
+        end_date: End date of unavailability in YYYY-MM-DD format (defaults to start_date for single day)
+        reason: Reason for time off (e.g., "Sick", "Vacation", "Personal", "Training")
+
+    Returns:
+        Confirmation message with the time-off details.
+
+    Examples:
+        - Single day sick leave: add_time_off_request("Bob", "2025-12-10", reason="Sick")
+        - Week vacation: add_time_off_request("Bob", "2025-12-09", "2025-12-15", "Vacation")
+    """
+    nurses = _load_hris()
+
+    # Find nurse by ID or name
+    found_nurse = None
+    for nurse in nurses:
+        if nurse.get("id") == nurse_id or nurse.get("name", "").lower() == nurse_id.lower():
+            found_nurse = nurse
+            break
+
+    if not found_nurse:
+        return f"Error: Nurse '{nurse_id}' not found."
+
+    # Parse dates
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+    except ValueError:
+        return f"Error: Invalid start_date format '{start_date}'. Use YYYY-MM-DD."
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            return f"Error: Invalid end_date format '{end_date}'. Use YYYY-MM-DD."
+    else:
+        end = start
+
+    if end < start:
+        return f"Error: end_date ({end_date}) cannot be before start_date ({start_date})."
+
+    # Sanitize reason (remove underscores to avoid parsing issues)
+    reason = reason.replace("_", "-")
+
+    # Generate time-off entries for each day in the range
+    # Format: "Off_YYYY-MM-DD_Reason_XXX"
+    prefs = found_nurse.get("preferences", {})
+    if "adhoc_requests" not in prefs:
+        prefs["adhoc_requests"] = []
+
+    added_dates = []
+    skipped_dates = []
+    current = start
+    while current <= end:
+        date_str = current.strftime("%Y-%m-%d")
+        request_entry = f"Off_{date_str}_Reason_{reason}"
+
+        # Check if this date already has a time-off request
+        existing = [r for r in prefs["adhoc_requests"] if r.startswith(f"Off_{date_str}_")]
+        if existing:
+            skipped_dates.append(date_str)
+        else:
+            prefs["adhoc_requests"].append(request_entry)
+            added_dates.append(date_str)
+
+        current += timedelta(days=1)
+
+    if not added_dates:
+        return f"No new time-off added. All dates already have existing requests: {', '.join(skipped_dates)}"
+
+    found_nurse["preferences"] = prefs
+    _save_hris(nurses)
+
+    # Build response
+    result = f"SUCCESS: Time-off request added.\n\n"
+    result += f"TIME-OFF DETAILS\n"
+    result += f"{'='*40}\n"
+    result += f"Nurse: {found_nurse['name']} ({found_nurse['id']})\n"
+    result += f"Reason: {reason}\n"
+    result += f"Period: {start_date} to {end.strftime('%Y-%m-%d')}\n"
+    result += f"Days blocked: {len(added_dates)}\n"
+
+    if len(added_dates) <= 7:
+        result += f"Dates: {', '.join(added_dates)}\n"
+    else:
+        result += f"Dates: {added_dates[0]} ... {added_dates[-1]} ({len(added_dates)} days)\n"
+
+    if skipped_dates:
+        result += f"\nSkipped (already blocked): {', '.join(skipped_dates)}\n"
+
+    result += f"\nThe nurse will NOT be assigned shifts on these dates."
+
+    return result
+
+
+def remove_time_off_request(
+    nurse_id: str,
+    start_date: str = "",
+    end_date: str = "",
+    clear_all: bool = False
+) -> str:
+    """
+    Removes time-off requests for a nurse.
+
+    Args:
+        nurse_id: The nurse's ID (e.g., "nurse_002") or name
+        start_date: Start date to remove in YYYY-MM-DD format (required unless clear_all=True)
+        end_date: End date to remove in YYYY-MM-DD format (defaults to start_date)
+        clear_all: If True, removes ALL time-off requests for the nurse
+
+    Returns:
+        Confirmation message.
+
+    Examples:
+        - Remove single day: remove_time_off_request("Bob", "2025-12-10")
+        - Remove period: remove_time_off_request("Bob", "2025-12-09", "2025-12-15")
+        - Clear all: remove_time_off_request("Bob", clear_all=True)
+    """
+    nurses = _load_hris()
+
+    # Find nurse by ID or name
+    found_nurse = None
+    for nurse in nurses:
+        if nurse.get("id") == nurse_id or nurse.get("name", "").lower() == nurse_id.lower():
+            found_nurse = nurse
+            break
+
+    if not found_nurse:
+        return f"Error: Nurse '{nurse_id}' not found."
+
+    prefs = found_nurse.get("preferences", {})
+    adhoc = prefs.get("adhoc_requests", [])
+
+    if not adhoc:
+        return f"No time-off requests found for {found_nurse['name']}."
+
+    if clear_all:
+        # Remove all time-off requests
+        time_off_requests = [r for r in adhoc if r.startswith("Off_")]
+        other_requests = [r for r in adhoc if not r.startswith("Off_")]
+
+        if not time_off_requests:
+            return f"No time-off requests found for {found_nurse['name']}."
+
+        prefs["adhoc_requests"] = other_requests
+        found_nurse["preferences"] = prefs
+        _save_hris(nurses)
+
+        result = f"SUCCESS: All time-off requests cleared.\n\n"
+        result += f"Nurse: {found_nurse['name']} ({found_nurse['id']})\n"
+        result += f"Removed: {len(time_off_requests)} time-off request(s)\n"
+        result += f"\nThe nurse is now available for scheduling on all dates."
+        return result
+
+    # Remove specific dates
+    if not start_date:
+        return "Error: start_date is required (or use clear_all=True to remove all requests)."
+
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+    except ValueError:
+        return f"Error: Invalid start_date format '{start_date}'. Use YYYY-MM-DD."
+
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            return f"Error: Invalid end_date format '{end_date}'. Use YYYY-MM-DD."
+    else:
+        end = start
+
+    # Find and remove matching requests
+    dates_to_remove = set()
+    current = start
+    while current <= end:
+        dates_to_remove.add(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
+
+    removed = []
+    remaining = []
+    for req in adhoc:
+        if req.startswith("Off_"):
+            parts = req.split("_")
+            if len(parts) >= 2 and parts[1] in dates_to_remove:
+                removed.append(req)
+                continue
+        remaining.append(req)
+
+    if not removed:
+        return f"No time-off requests found for {found_nurse['name']} in the specified period ({start_date} to {end.strftime('%Y-%m-%d')})."
+
+    prefs["adhoc_requests"] = remaining
+    found_nurse["preferences"] = prefs
+    _save_hris(nurses)
+
+    result = f"SUCCESS: Time-off request(s) removed.\n\n"
+    result += f"Nurse: {found_nurse['name']} ({found_nurse['id']})\n"
+    result += f"Period: {start_date} to {end.strftime('%Y-%m-%d')}\n"
+    result += f"Removed: {len(removed)} day(s)\n"
+    result += f"\nThe nurse is now available for scheduling on these dates."
+
+    return result
+
+
+def list_time_off_requests(nurse_id: str = "") -> str:
+    """
+    Lists all time-off requests, optionally filtered by nurse.
+
+    Args:
+        nurse_id: Optional nurse ID or name to filter by. If empty, shows all nurses.
+
+    Returns:
+        Formatted list of all time-off requests.
+    """
+    nurses = _load_hris()
+
+    if nurse_id:
+        # Filter to specific nurse
+        found_nurse = None
+        for nurse in nurses:
+            if nurse.get("id") == nurse_id or nurse.get("name", "").lower() == nurse_id.lower():
+                found_nurse = nurse
+                break
+
+        if not found_nurse:
+            return f"Error: Nurse '{nurse_id}' not found."
+
+        nurses = [found_nurse]
+
+    result = "TIME-OFF REQUESTS\n" + "=" * 50 + "\n\n"
+
+    total_requests = 0
+    nurses_with_requests = 0
+
+    for nurse in nurses:
+        prefs = nurse.get("preferences", {})
+        adhoc = prefs.get("adhoc_requests", [])
+        time_off = [r for r in adhoc if r.startswith("Off_")]
+
+        if time_off:
+            nurses_with_requests += 1
+            result += f"{nurse['name']} ({nurse['id']}):\n"
+
+            # Parse and sort by date
+            parsed = []
+            for req in time_off:
+                parts = req.split("_")
+                if len(parts) >= 4:
+                    date = parts[1]
+                    reason = parts[3] if len(parts) > 3 else "Unspecified"
+                    parsed.append((date, reason))
+                elif len(parts) >= 2:
+                    parsed.append((parts[1], "Unspecified"))
+
+            parsed.sort(key=lambda x: x[0])
+
+            # Group consecutive dates with same reason
+            if parsed:
+                groups = []
+                current_group = {"start": parsed[0][0], "end": parsed[0][0], "reason": parsed[0][1]}
+
+                for i in range(1, len(parsed)):
+                    date, reason = parsed[i]
+                    prev_date = datetime.strptime(current_group["end"], "%Y-%m-%d")
+                    curr_date = datetime.strptime(date, "%Y-%m-%d")
+
+                    if (curr_date - prev_date).days == 1 and reason == current_group["reason"]:
+                        current_group["end"] = date
+                    else:
+                        groups.append(current_group)
+                        current_group = {"start": date, "end": date, "reason": reason}
+
+                groups.append(current_group)
+
+                for g in groups:
+                    if g["start"] == g["end"]:
+                        result += f"  - {g['start']}: {g['reason']}\n"
+                    else:
+                        start_dt = datetime.strptime(g["start"], "%Y-%m-%d")
+                        end_dt = datetime.strptime(g["end"], "%Y-%m-%d")
+                        days = (end_dt - start_dt).days + 1
+                        result += f"  - {g['start']} to {g['end']} ({days} days): {g['reason']}\n"
+
+                total_requests += len(time_off)
+            result += "\n"
+
+    if nurses_with_requests == 0:
+        result += "No time-off requests found.\n"
+    else:
+        result += "-" * 50 + "\n"
+        result += f"Total: {total_requests} day(s) blocked for {nurses_with_requests} nurse(s)\n"
 
     return result

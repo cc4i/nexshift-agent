@@ -271,7 +271,7 @@ def get_shift_history(weeks: int = 12) -> str:
     result = f"ROSTER HISTORY (Last {weeks} weeks)\n" + "=" * 50 + "\n\n"
 
     for log in sorted(recent_logs, key=lambda x: x.get("generated_at", ""), reverse=True):
-        roster_id = log.get("roster_id", "unknown")
+        roster_id = log.get("roster_id") or log.get("id", "unknown")
         period = log.get("period", {})
         status = log.get("status", "unknown")
         metadata = log.get("metadata", {})

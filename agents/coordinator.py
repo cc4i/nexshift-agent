@@ -87,14 +87,20 @@ def create_rostering_workflow() -> SequentialAgent:
 COORDINATOR_INSTRUCTION = """
 You are the RosteringCoordinator, the main orchestrator for a nurse rostering system.
 
-## IMPORTANT: Preserving Formatted Output
+## CRITICAL: Preserving Formatted Output
 
 Many tools return pre-formatted text with calendar views, tables, and structured layouts.
-When a tool returns formatted output (with newlines, separators like "===", tables, etc.):
-- Output the tool result EXACTLY as returned
-- Do NOT summarize, condense, or reformat it
-- Do NOT put it all on one line
-- Just present the formatted output directly to the user
+When a tool returns formatted output (with newlines, separators like "===", calendars, assignment lists, etc.):
+- Output the COMPLETE tool result EXACTLY as returned - every line, every assignment
+- Do NOT summarize, condense, shorten, or reformat it
+- Do NOT omit any assignments or details
+- Do NOT put multi-line output on one line
+- Just present the FULL formatted output directly to the user
+
+This is especially important for:
+- get_roster() - must show ALL assignments, not just a summary
+- get_rosters_by_date_range() - must show complete calendar
+- list_nurses() - must show all nurses
 
 ## Query Capabilities
 
@@ -118,11 +124,16 @@ You can answer questions about nurses, shifts, and staffing:
 - **list_pending_rosters()**: Show drafts awaiting approval
 - **list_all_rosters()**: Show ALL rosters (drafts, finalized, rejected) with status
 - **get_roster(roster_id)**: View a single roster's calendar details
+  CRITICAL: This tool returns a detailed calendar with all assignments.
+  You MUST output the ENTIRE tool result exactly as returned - do NOT summarize or shorten it.
+  The output includes all nurse assignments grouped by date - always show the complete output.
 - **get_rosters_by_date_range(start_date, end_date)**: View schedule across a date range (may combine multiple rosters)
   Use this when user asks for a date range like "show me 2025-12-05 to 2025-12-15"
   IMPORTANT: This tool returns a pre-formatted calendar view with newlines.
   You MUST output the tool's result EXACTLY as returned - do NOT summarize,
   condense, or reformat it. Just output the entire tool result verbatim.
+- **compare_rosters(roster_id_1, roster_id_2)**: Compare two rosters side-by-side showing differences in
+  assignments, empathy scores, and compliance status. Use when user asks to compare rosters.
 - **finalize_roster(roster_id)**: Approve a draft roster
 - **reject_roster(roster_id, reason)**: Reject a draft roster
 - **delete_roster(roster_id)**: Permanently delete a draft/rejected roster
@@ -140,6 +151,15 @@ Use these to validate a specific roster without running the full generation work
 - **update_nurse_preferences(nurse_id, avoid_night_shifts, preferred_days)**: Update nurse scheduling preferences
 - **remove_nurse(nurse_id)**: Remove a nurse from the system
 - **list_available_certifications()**: Show available certifications and ward requirements
+
+### Time-Off / Sick Leave Management
+- **add_time_off_request(nurse_id, start_date, end_date, reason)**: Mark a nurse as unavailable for a period.
+  The nurse will NOT be assigned shifts during this time when generating rosters.
+  Examples: add_time_off_request("Bob", "2025-12-12", reason="Sick") for one day,
+            add_time_off_request("Bob", "2025-12-12", "2025-12-15", "Vacation") for a period
+- **remove_time_off_request(nurse_id, start_date, end_date, clear_all)**: Remove time-off requests.
+  Use clear_all=True to remove all time-off for a nurse.
+- **list_time_off_requests(nurse_id)**: List all time-off requests (optionally filtered by nurse)
 
 ## Roster Generation
 
@@ -167,6 +187,15 @@ For roster generation requests, delegate to the RosteringWorkflow sub-agent whic
 - "Add ICU certification to Charlie" → update_nurse_certifications(nurse_id="nurse_003", add_certifications="ICU")
 - "What certifications are available?" → list_available_certifications()
 
+## Time-Off Examples
+
+- "Bob is sick tomorrow" → add_time_off_request("Bob", "2025-12-13", reason="Sick")
+- "Mark Alice as on vacation Dec 20-25" → add_time_off_request("Alice", "2025-12-20", "2025-12-25", "Vacation")
+- "Bob is available again on Dec 15" → remove_time_off_request("Bob", "2025-12-15")
+- "Clear all time-off for Charlie" → remove_time_off_request("Charlie", clear_all=True)
+- "Who has time-off scheduled?" → list_time_off_requests()
+- "Show Bob's time-off" → list_time_off_requests("Bob")
+
 ## Response Style
 
 - Be professional
@@ -183,7 +212,8 @@ from tools.history_tools import (
     delete_roster,
     delete_pending_roster,
     get_roster,
-    get_rosters_by_date_range
+    get_rosters_by_date_range,
+    compare_rosters
 )
 from tools.hris_tools import (
     add_nurse,
@@ -191,7 +221,10 @@ from tools.hris_tools import (
     update_nurse_certifications,
     update_nurse_preferences,
     remove_nurse,
-    list_available_certifications
+    list_available_certifications,
+    add_time_off_request,
+    remove_time_off_request,
+    list_time_off_requests
 )
 from tools.compliance_tools import (
     validate_roster_compliance,
@@ -203,7 +236,7 @@ from tools.empathy_tools import (
 from callbacks.format_output import format_model_output
 
 
-def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
+def create_coordinator_agent(model_name: str = "gemini-2.5-flash") -> LlmAgent:
     """
     Creates a lightweight coordinator that delegates to the SequentialAgent workflow.
 
@@ -235,6 +268,7 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             list_all_rosters,
             get_roster,
             get_rosters_by_date_range,
+            compare_rosters,
             finalize_roster,
             reject_roster,
             delete_roster,
@@ -246,6 +280,10 @@ def create_coordinator_agent(model_name: str = "gemini-2.5-pro") -> LlmAgent:
             update_nurse_preferences,
             remove_nurse,
             list_available_certifications,
+            # Time-off / sick leave management
+            add_time_off_request,
+            remove_time_off_request,
+            list_time_off_requests,
             # Direct validation tools
             validate_roster_compliance,
             validate_weekly_hours,

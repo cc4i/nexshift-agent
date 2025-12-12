@@ -206,8 +206,9 @@ class OutputFormatter:
             total_days = (end_date - start_date).days + 1
 
             if not assignments:
-                result += "_No assignments in this roster_\n"
-                return result
+                # Could not parse assignments from the text - return original
+                # This happens when LLM summarizes instead of returning raw tool output
+                return text
 
             # Parse assignments with date info from get_roster() format
             # Format: "📅 2025-12-04 (Wednesday)" followed by assignment lines

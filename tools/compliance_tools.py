@@ -24,6 +24,12 @@ def _load_json(filepath: str) -> dict:
         return {}
 
 
+def _save_json(filepath: str, data: dict) -> None:
+    """Save data to JSON file."""
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
 def _load_hris() -> List[dict]:
     """Load HRIS data."""
     hris_path = os.path.join(DATA_DIR, "mock_hris.json")
@@ -305,6 +311,34 @@ def validate_roster_compliance(roster_id: str = "") -> str:
 
     result += "\n" + "=" * 60 + "\n"
     result += "Note: This is programmatic validation. Results are deterministic.\n"
+
+    # Update roster metadata with compliance status
+    compliance_status = "PASS" if (total_violations == 0 and not senior_coverage_issues) else "FAIL"
+    compliance_notes = (
+        f"{total_violations} violation(s), {len(senior_coverage_issues)} senior coverage issue(s)"
+        if compliance_status == "FAIL" else "All checks passed"
+    )
+    roster_file = os.path.join(ROSTERS_DIR, f"{roster_id}.json")
+    if os.path.exists(roster_file):
+        roster_data = _load_json(roster_file)
+        if "metadata" not in roster_data:
+            roster_data["metadata"] = {}
+        roster_data["metadata"]["compliance_status"] = compliance_status
+        roster_data["metadata"]["compliance_notes"] = compliance_notes
+        _save_json(roster_file, roster_data)
+
+        # Also update shift_history.json to keep in sync
+        history_file = os.path.join(DATA_DIR, "shift_history.json")
+        if os.path.exists(history_file):
+            history = _load_json(history_file)
+            for log in history.get("logs", []):
+                if log.get("roster_id") == roster_id or log.get("id") == roster_id:
+                    if "metadata" not in log:
+                        log["metadata"] = {}
+                    log["metadata"]["compliance_status"] = compliance_status
+                    log["metadata"]["compliance_notes"] = compliance_notes
+                    break
+            _save_json(history_file, history)
 
     return result
 

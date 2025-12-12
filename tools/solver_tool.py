@@ -102,10 +102,12 @@ def _auto_save_roster(roster_id: str, roster_dict: dict, shifts_objs: list) -> N
     """
     Automatically save roster to disk when generated.
     This ensures the roster file exists even if the LLM doesn't call save_draft_roster().
+    Also adds an entry to shift_history.json so finalize_roster() can update it.
     """
     import os
 
     ROSTERS_DIR = os.path.join(os.path.dirname(__file__), "../data/rosters")
+    SHIFT_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "../data/shift_history.json")
 
     # Calculate period from shifts
     if shifts_objs:
@@ -127,6 +129,34 @@ def _auto_save_roster(roster_id: str, roster_dict: dict, shifts_objs: list) -> N
         logger.info(f"Roster auto-saved to {roster_file}")
     except Exception as e:
         logger.error(f"Failed to auto-save roster: {e}")
+        return
+
+    # Also add to shift_history.json so finalize_roster() can update it
+    try:
+        # Load existing history
+        if os.path.exists(SHIFT_HISTORY_FILE):
+            with open(SHIFT_HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        else:
+            history = {"logs": [], "metadata": {"created_at": datetime.now().isoformat()}}
+
+        if "logs" not in history:
+            history["logs"] = []
+
+        # Create history entry
+        history_entry = roster_dict.copy()
+        history_entry["roster_id"] = roster_id
+
+        # Remove existing entry with same ID (if regenerating)
+        history["logs"] = [l for l in history["logs"] if l.get("roster_id") != roster_id and l.get("id") != roster_id]
+        history["logs"].append(history_entry)
+
+        # Save history
+        with open(SHIFT_HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=2, default=str)
+        logger.info(f"Roster added to shift_history.json: {roster_id}")
+    except Exception as e:
+        logger.error(f"Failed to add roster to shift_history: {e}")
 
 
 def generate_roster(start_date: str = "", num_days: int = 7, constraints_json: str = "{}") -> str:
@@ -429,6 +459,52 @@ def _analyze_infeasibility(nurses_objs: list, shifts_objs: list, nurse_stats: di
             "severity": "MEDIUM" if high_fatigue_count == 0 else "HIGH",
             "message": f"{len(fatigued_nurses)} nurses have elevated fatigue ({high_fatigue_count} high risk). "
                       f"This reduces scheduling capacity. Consider rest days or lighter duties."
+        })
+
+    # =========================================================================
+    # 5b. TIME-OFF REQUESTS ANALYSIS
+    # =========================================================================
+    time_off_entries = []
+    scheduling_dates = set(s.start_time.date() for s in shifts_objs)
+
+    for n in nurses_objs:
+        if n.preferences and n.preferences.adhoc_requests:
+            for request in n.preferences.adhoc_requests:
+                if request.startswith("Off_"):
+                    parts = request.split("_")
+                    if len(parts) >= 2:
+                        try:
+                            off_date_str = parts[1]
+                            off_date = datetime.strptime(off_date_str, "%Y-%m-%d").date()
+                            reason = parts[3] if len(parts) >= 4 else "Unspecified"
+                            # Only include if date falls within scheduling period
+                            if off_date in scheduling_dates:
+                                time_off_entries.append({
+                                    "nurse": n.name,
+                                    "nurse_id": n.id,
+                                    "date": off_date_str,
+                                    "reason": reason
+                                })
+                        except ValueError:
+                            pass
+
+    if time_off_entries:
+        report["time_off_requests"] = time_off_entries
+        # Group by nurse for summary
+        nurses_on_leave = {}
+        for entry in time_off_entries:
+            nurse_id = entry["nurse_id"]
+            if nurse_id not in nurses_on_leave:
+                nurses_on_leave[nurse_id] = {"name": entry["nurse"], "dates": [], "reasons": set()}
+            nurses_on_leave[nurse_id]["dates"].append(entry["date"])
+            nurses_on_leave[nurse_id]["reasons"].add(entry["reason"])
+
+        report["recommendations"].append({
+            "issue": "TIME_OFF_REQUESTS",
+            "severity": "INFO",
+            "message": f"{len(nurses_on_leave)} nurse(s) have time-off during this period ({len(time_off_entries)} total days blocked). "
+                      f"Nurses: {', '.join([v['name'] for v in nurses_on_leave.values()])}. "
+                      f"These nurses will NOT be assigned shifts on their blocked dates."
         })
 
     # =========================================================================
@@ -1038,6 +1114,7 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
             model.Add(sum([]) >= 1)
 
     # Hard Constraint 8: Honor adhoc time-off requests (high priority)
+    time_off_blocked = []  # Track for logging
     for n in nurses_objs:
         if n.preferences and n.preferences.adhoc_requests:
             for request in n.preferences.adhoc_requests:
@@ -1048,12 +1125,28 @@ def _solve_roster_internal(nurses_objs: list, shifts_objs: list, nurse_stats: di
                         try:
                             off_date_str = parts[1]
                             off_date = datetime.strptime(off_date_str, "%Y-%m-%d").date()
+                            reason = parts[3] if len(parts) >= 4 else "Unspecified"
                             # Block all shifts on this date for this nurse
+                            shifts_blocked = 0
                             for s in shifts_objs:
                                 if s.start_time.date() == off_date:
                                     model.Add(assignments[(n.id, s.id)] == 0)
+                                    shifts_blocked += 1
+                            if shifts_blocked > 0:
+                                time_off_blocked.append({
+                                    "nurse": n.name,
+                                    "nurse_id": n.id,
+                                    "date": off_date_str,
+                                    "reason": reason,
+                                    "shifts_blocked": shifts_blocked
+                                })
                         except ValueError:
-                            pass  # Invalid date format, skip
+                            logger.warning(f"Invalid date format in adhoc request: {request}")
+
+    if time_off_blocked:
+        logger.info(f"Time-off constraints applied: {len(time_off_blocked)} nurse-date combinations blocked")
+        for entry in time_off_blocked:
+            logger.debug(f"  Blocked: {entry['nurse']} on {entry['date']} ({entry['reason']}) - {entry['shifts_blocked']} shifts")
 
     # Soft Constraints (Preferences) - build objective function
     objective_terms = []

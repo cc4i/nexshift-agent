@@ -24,6 +24,12 @@ def _load_json(filepath: str) -> dict:
         return {}
 
 
+def _save_json(filepath: str, data: dict) -> None:
+    """Save data to JSON file."""
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
 def _load_hris() -> List[dict]:
     """Load HRIS data."""
     hris_path = os.path.join(DATA_DIR, "mock_hris.json")
@@ -467,5 +473,32 @@ def analyze_roster_fairness(roster_id: str = "") -> str:
         result += f"{m['name']:<15} {m['total_shifts']:>6} {m['night_shifts']:>6} {m['weekend_shifts']:>6} {fatigue_str:>8}\n"
 
     result += "\n" + "=" * 60 + "\n"
+
+    # Update roster metadata with empathy score
+    empathy_notes = (
+        f"{len(preference_violations)} preference violation(s), {len(burnout_risks)} burnout risk(s)"
+        if empathy_score < 0.8 else "Good - Roster is fair and considerate"
+    )
+    roster_file = os.path.join(ROSTERS_DIR, f"{roster_id}.json")
+    if os.path.exists(roster_file):
+        roster_data = _load_json(roster_file)
+        if "metadata" not in roster_data:
+            roster_data["metadata"] = {}
+        roster_data["metadata"]["empathy_score"] = empathy_score
+        roster_data["metadata"]["empathy_notes"] = empathy_notes
+        _save_json(roster_file, roster_data)
+
+        # Also update shift_history.json to keep in sync
+        history_file = os.path.join(DATA_DIR, "shift_history.json")
+        if os.path.exists(history_file):
+            history = _load_json(history_file)
+            for log in history.get("logs", []):
+                if log.get("roster_id") == roster_id or log.get("id") == roster_id:
+                    if "metadata" not in log:
+                        log["metadata"] = {}
+                    log["metadata"]["empathy_score"] = empathy_score
+                    log["metadata"]["empathy_notes"] = empathy_notes
+                    break
+            _save_json(history_file, history)
 
     return result
